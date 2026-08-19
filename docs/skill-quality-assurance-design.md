@@ -3,57 +3,69 @@
 | 项目 | 内容 |
 |---|---|
 | 文档状态 | Final |
-| 生效日期 | 2026-08-19 |
+| 生效日期 | 2026-08-20 |
 | 设计对象 | Skill 质量保证 Module |
 | 接入方式 | MCP Tool |
 | MCP Tool | <code>scan_skill_quality</code> |
-| 输入范围 | Skill ZIP 上传包 |
+| 输入范围 | Skill ZIP 包 |
 | 目标读者 | Skill 平台研发、安全研发、测试、运维与审核人员 |
 
 ## 1. 设计结论
 
-<code>SkillQualityAssurance</code> 是独立业务 Module；MCP Adapter 只负责协议输入、上传句柄解析和结果封装。
+<code>SkillQualityAssurance</code> 是无副作用的检查 Module。它接收一个 Skill ZIP，返回检查报告文件；请求修改结果时额外返回修改后的 ZIP。
 
-Module 复用现有包扫描和外部安全扫描，并报告可确定性判断的建设规范；其余规范返回 <code>NOT_EVALUATED</code>。Module 不执行或修改上传包，也不改变现有规则和上传流程。
+Module 不上传、保存、入库、发布或修改 Skill，不写数据库，不调用不存在的平台上传流程。MCP Adapter 只负责 Base64 解码、Interface 调用和结果封装。
 
-## 2. 设计范围与约束
+## 2. 设计范围与规则约束
 
 ### 2.1 来源文档
 
 | 来源编号 | 文档 | 用途 |
 |---|---|---|
-| SRC-PKG-MD | <code>skill-upload-package-scan-rules(1).md</code> | 包扫描 1—22 节、错误码、扫描产物和上传顺序的完整依据。 |
+| SRC-PKG-MD | <code>skill-upload-package-scan-rules(1).md</code> | 包检查 1—22 节、错误码和检查产物。 |
 | SRC-SPEC | <code>原版-skills建设规范_0609(3).docx</code> | Skill 结构、描述、正文、代码、依赖、附件和内容规范。 |
-| SRC-PKG-DOCX | <code>Skill 上传包扫描规则说明.docx</code> | 与 SRC-PKG-MD 交叉核对；不从缺失或残缺片段推导新规则。 |
-| SRC-SEC | <code>0720扫描规则说明.docx</code> | 当前启用的 15 类安全检测器、检测项、严重度和跳过规则。 |
+| SRC-PKG-DOCX | <code>Skill 上传包扫描规则说明.docx</code> | 与 SRC-PKG-MD 交叉核对；不从残缺片段推导规则。 |
+| SRC-SEC | <code>0720扫描规则说明.docx</code> | 15 类安全检测器、检测项、严重度和跳过规则。 |
 
-包扫描的配置值以平台运行时配置为准。外部安全扫描的具体匹配实现和 <code>passed</code> 结果以现有安全扫描器为准。质量保证 Module 和 MCP Adapter 均不替代这两项现有实现重新解释规则。
+Module 直接实现附录 A—C 的可确定规则。来源没有给出确定方法的项目返回 <code>NOT_EVALUATED</code>，不得假设存在外部包扫描器、安全扫描器、上传临时区、数据库或入库接口。
 
 ### 2.2 内容分类
 
-| 分类 | 含义 | 是否改变扫描结果 |
+| 分类 | 含义 | 是否改变检查结论 |
 |---|---|---|
-| <code>SOURCE_RULE</code> | 来源文档明确写出的检测、校验、跳过、严重度或流程规则。 | 是，严格按来源执行。 |
+| <code>SOURCE_RULE</code> | 来源文档明确写出的检测、校验、跳过或严重度。 | 是，严格按来源执行。 |
 | <code>SOURCE_ISSUE</code> | 来源规则存在缺失、歧义、可能误报或可能漏报。 | 否，只记录限制。 |
-| <code>IMPLEMENTATION_ONLY</code> | Module 封装、MCP 接入、版本记录、脱敏、审计和错误表达。 | 否，不得新增、删除、升级或降级命中。 |
-| <code>PROPOSED_CHANGE</code> | 对来源规则的候选修改。 | 否，未启用。 |
+| <code>IMPLEMENTATION_ONLY</code> | Module Interface、MCP 接入、版本记录、脱敏和错误表达。 | 否，不改变规则命中。 |
+| <code>REMEDIATION_OUTPUT</code> | 根据已命中问题生成的建议或修改后 ZIP。 | 否，不改变命中和结论。 |
 
-只有 <code>SOURCE_RULE</code> 可以影响规则命中和原有上传结果。<code>SOURCE_ISSUE</code> 不得被实现为白名单、例外、补充正则或严重度调整。
+<code>SOURCE_ISSUE</code> 和 <code>REMEDIATION_OUTPUT</code> 不得成为白名单、补充正则、严重度调整或规则修正。
 
-### 2.3 明确不在范围内
+### 2.3 运行配置
+
+来源没有给出以下最终值，部署时必须显式配置，Module 不提供默认值：
+
+~~~text
+InspectionPolicy
+  maxZipBytes: integer
+  allowedExtensions: string[]
+  skillNamePattern: string
+~~~
+
+配置缺失时 Module 返回 <code>ERROR</code>，不得自行采用推测值。请求参数不能覆盖这些配置。
+
+### 2.4 明确不在范围内
 
 - RAR、目录和单个 <code>SKILL.md</code> 输入。
+- 上传临时区、对象存储、数据库、入库、发布、版本管理和审批流程。
+- 写回输入文件、保存输出文件或自动应用修改结果；修改后的 ZIP 只随响应返回。
 - 加密 ZIP、符号链接、硬链接、设备文件和嵌套压缩包的新增拒绝规则。
 - Unicode 等价路径和大小写折叠冲突的新增拒绝规则。
 - SVG XML 解析；来源规则规定 SVG 当前不做魔数校验，默认通过。
 - YAML 重复键、不安全类型、Markdown 正文非空和本地引用存在性的新增阻断。
-- 将包扫描的 64KB 样本规则扩展为全文扫描。
+- 将包检查的 64KB 样本规则扩展为全文扫描。
 - AST、代码围栏语义、上下文豁免或语义补漏。
-- 把安全严重度自行转换为 <code>PASS</code>、<code>REVIEW</code> 或 <code>REJECT</code>。
 - 恶意文件、YARA、杀毒、大模型、SBOM、CVE、签名、内容合规和动态沙箱扫描。
-- 自动修复和例外审批。
-
-规范性规则明细见附录 A—D。
+- 自动放行、误报豁免和例外审批。
 
 ## 3. 质量保证 Module 与 MCP Adapter
 
@@ -65,67 +77,86 @@ MCP Client
     ▼
 MCP Adapter: scan_skill_quality
     ├── 校验 MCP 输入
-    ├── Upload Resolver: uploadUri -> SkillPackageInput
+    └── Base64 -> SkillPackageInput
     │
     ▼
-SkillQualityAssurance.scan(input) -> QualityReport
-    ├── Existing Package Scanner Adapter
-    ├── Specification Checker
-    ├── Existing Security Scanner Adapter
-    ├── Existing Security Result Store Adapter
-    └── Report Builder
+SkillQualityAssurance.inspect(input, responseMode) -> SkillInspectionResult
+    ├── Package Rule Evaluator
+    ├── Specification Rule Evaluator
+    ├── Security Rule Evaluator
+    ├── Conclusion Builder
+    └── Remediation Builder
     │
     ▼
-MCP Adapter: QualityReport -> structuredContent
+MCP Adapter: SkillInspectionResult -> structuredContent + embedded resources
 ~~~
 
-外部 seam 位于 MCP Adapter 与质量保证 Module 之间，质量保证知识集中在 Module 内。
+外部 seam 位于 MCP Adapter 与质量保证 Module 之间。各 Evaluator 和 Builder 是 Module 的内部实现，不作为外部 Interface 或假定存在的 Adapter。
 
 ### 3.2 质量保证 Module Interface
 
 Module 只暴露一个操作：
 
 ~~~text
-scan(input: SkillPackageInput) -> QualityReport
+inspect(input: SkillPackageInput, responseMode: ResponseMode) -> SkillInspectionResult
 ~~~
-
-<code>SkillPackageInput</code> 是协议无关的输入：
 
 ~~~text
 SkillPackageInput
   originalFileName: string
   content: ReadableBinary
+
+ResponseMode
+  REPORT_ONLY
+  WITH_SUGGESTIONS
+  WITH_REVISED_ZIP
+
+SkillInspectionResult
+  report: SkillInspectionReport
+  revisedPackage: BinaryArtifact?
+
+BinaryArtifact
+  fileName: string
+  mimeType: application/zip
+  content: ReadableBinary
+  sha256: string
 ~~~
 
 Interface 不变量：
 
-- <code>originalFileName</code> 和 <code>content</code> 来自同一个上传目标，<code>content</code> 只读。
-- Module 自行执行文件非空、ZIP 扩展名、ZIP 魔数和可打开性检查。
-- Interface 不包含 <code>uploadUri</code>、<code>requestId</code>、MCP Schema 或 Tool 错误。
-- Interface 不提供规则开关、阈值覆盖、严重度覆盖、策略选择或忽略规则参数。
+- <code>content</code> 只读；Module 不执行其中的脚本、命令或安装动作，也不改变输入 ZIP 的字节。
+- 三种 <code>responseMode</code> 使用完全相同的检查过程、结论和问题列表。
+- <code>WITH_SUGGESTIONS</code> 在报告文件中增加建议；<code>WITH_REVISED_ZIP</code> 同时生成一个新的修改后 ZIP。
+- 修改后 ZIP 使用新文件名和 SHA-256；原 ZIP 仍由用户持有且保持不变。
+- Interface 不提供规则开关、阈值覆盖、严重度覆盖、策略选择或忽略参数。
+- 相同输入、配置和规则版本产生相同的检查结论。
+- Module 不读写数据库、对象存储、上传区或 Skill 仓库。
 
 ### 3.3 Module 内部职责
 
-- Existing Package Scanner Adapter：复用现有包扫描行为。
-- Specification Checker：执行附录 B 中可确定性判断的建设规范检查。
-- Existing Security Scanner Adapter：复用现有安全扫描行为和 <code>passed</code>。
-- Existing Security Result Store Adapter：保持 <code>t_skill_security_scan</code> 的原保存行为。
-- Report Builder：生成协议无关的 <code>QualityReport</code>。
+- Package Rule Evaluator：执行附录 A 中可确定的 ZIP、路径、大小、类型、内容和元数据规则。
+- Specification Rule Evaluator：执行附录 B 中可确定的建设规范。
+- Security Rule Evaluator：执行附录 C 明确列出的检测条件；未定义部分不自行补全。
+- Conclusion Builder：汇总检查状态和覆盖范围，不改变来源严重度。
+- Remediation Builder：使用 Module 内置、按规则 ID 版本化的确定性修复模板生成建议；请求修改结果时，在内存中复制原包内容并生成新的修改后 ZIP，不调用大模型或外部服务。
 
 ### 3.4 MCP Adapter 职责
 
-- 将 <code>uploadUri</code> 解析为 <code>SkillPackageInput</code> 后调用 Module；<code>requestId</code> 不进入 Module。
-- 将 <code>QualityReport</code> 放入 <code>structuredContent.result</code>，协议错误进入 <code>toolErrors</code>；不执行或修改规则结果。
+- 校验 JSON Schema，将 <code>contentBase64</code> 解码为只读字节并调用 Module。
+- 将 <code>SkillInspectionReport</code> 序列化为 JSON 文件资源；存在 <code>revisedPackage</code> 时增加 ZIP 文件资源。
+- <code>structuredContent</code> 只返回结论摘要和文件描述，不返回修改后的文件正文。
+- Schema 或 Base64 无效时返回 MCP Tool 错误；不调用 Module。
+- 不持久化请求、原 ZIP、报告文件或修改后 ZIP。
 
-## 4. MCP Adapter 契约
+## 4. MCP Tool 契约
 
 ### 4.1 Tool 元数据
 
 ~~~json
 {
   "name": "scan_skill_quality",
-  "title": "Skill 质量与安全扫描",
-  "description": "通过 MCP 提供 Skill ZIP 上传包质量保证能力，返回质量报告。不会执行或修改上传包。",
+  "title": "Skill 质量与安全检查",
+  "description": "检查 Skill ZIP，返回报告文件，并可返回独立的修改后 ZIP；不保存或覆盖原包。",
   "annotations": {
     "readOnlyHint": true,
     "destructiveHint": false,
@@ -142,53 +173,72 @@ Interface 不变量：
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["uploadUri"],
+  "required": ["skillPackage"],
   "properties": {
-    "uploadUri": {
-      "type": "string",
-      "pattern": "^upload://[A-Za-z0-9._-]+$",
-      "description": "平台生成的不可伪造上传句柄。"
+    "skillPackage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fileName", "contentBase64"],
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "contentBase64": {
+          "type": "string",
+          "minLength": 1,
+          "contentEncoding": "base64"
+        }
+      }
     },
-    "requestId": {
+    "responseMode": {
       "type": "string",
-      "maxLength": 128
+      "enum": [
+        "REPORT_ONLY",
+        "WITH_SUGGESTIONS",
+        "WITH_REVISED_ZIP"
+      ],
+      "default": "REPORT_ONLY"
     }
   }
 }
 ~~~
 
-<code>uploadUri</code> 只能解析到平台上传临时区中的一个文件；Upload Resolver 提供对应的原始文件名和字节流。
+MCP 请求直接携带 ZIP 的 Base64 内容，不依赖 <code>uploadUri</code>、临时上传区或任意文件路径。Adapter 解码后仍按 <code>maxZipBytes</code> 检查原始 ZIP 大小；MCP Server 的请求大小上限必须容纳该值对应的 Base64 开销，否则配置无效。
 
-### 4.3 输出 Envelope
+### 4.3 输出
+
+Tool 不返回修改后的文件正文。报告和修改后 ZIP 通过 MCP embedded resource 返回：
 
 ~~~json
 {
-  "requestId": "optional-client-id",
-  "toolStatus": "COMPLETED",
-  "target": {
-    "uploadUri": "upload://12345"
-  },
-  "result": {
-    "scanId": "sq_01...",
-    "status": "COMPLETED"
-  },
-  "toolErrors": []
+  "content": [
+    {"type": "resource", "resource": {"uri": "skill-check://si_01/report.json", "mimeType": "application/json", "blob": "<base64-json-bytes>"}},
+    {"type": "resource", "resource": {"uri": "skill-check://si_01/pdf-revised.zip", "mimeType": "application/zip", "blob": "<base64-zip-bytes>"}}
+  ],
+  "structuredContent": {
+    "inspectionId": "si_01...",
+    "status": "COMPLETED",
+    "conclusion": {"status": "REVIEW_REQUIRED", "coverage": "PARTIAL"},
+    "artifacts": [
+      {"role": "REPORT", "fileName": "skill-quality-report.json", "mimeType": "application/json", "sha256": "...", "uri": "skill-check://si_01/report.json"},
+      {"role": "REVISED_PACKAGE", "fileName": "pdf-revised.zip", "mimeType": "application/zip", "sha256": "...", "uri": "skill-check://si_01/pdf-revised.zip"}
+    ]
+  }
 }
 ~~~
 
-输出语义：
+<code>skill-check://</code> 只标识本次响应中的嵌入资源，不是下载地址，也不要求服务器保存文件。MCP Adapter 不产生 <code>text</code> 类型的修改内容。
 
-- <code>toolStatus=COMPLETED</code> 表示 Adapter 已取得 <code>QualityReport</code>，不表示 Skill 通过扫描。
-- 参数、句柄解析或 Adapter 执行失败时，<code>toolStatus=TOOL_ERROR</code>、<code>result=null</code>，错误进入 <code>toolErrors</code>。
-- <code>requestId</code> 和 <code>target.uploadUri</code> 仅用于请求关联；<code>result</code> 原样承载 <code>QualityReport</code>。
+## 5. 报告文件与修改后 ZIP
 
-## 5. QualityReport 结果模型
+### 5.1 报告文件结构
 
-### 5.1 结构
+<code>SkillInspectionReport</code> 序列化为 UTF-8 JSON 字节，以 <code>skill-quality-report.json</code> 文件资源返回。以下示例对应 <code>WITH_REVISED_ZIP</code>。
 
 ~~~json
 {
-  "scanId": "sq_01...",
+  "inspectionId": "si_01...",
   "status": "COMPLETED",
   "target": {
     "originalFileName": "pdf.zip",
@@ -196,18 +246,15 @@ Interface 不变量：
   },
   "versions": {
     "moduleVersion": "1.0.0",
-    "packageScannerVersion": "...",
-    "securityScannerVersion": "...",
-    "sourceBundleId": "..."
+    "rulesetVersion": "..."
   },
-  "coverage": {
-    "packageScan": "ENABLED",
-    "specificationCheck": "PARTIAL",
-    "externalSecurityScan": "ENABLED",
-    "malwareFileScan": "DISABLED_BY_SOURCE",
-    "llmScan": "DISABLED_BY_SOURCE"
+  "conclusion": {
+    "status": "REVIEW_REQUIRED",
+    "coverage": "PARTIAL",
+    "summary": "发现 1 项潜在不合规信息；12 项规则未完全评估。",
+    "basisRuleIds": ["SEC-SECRET-08"]
   },
-  "packageScan": {
+  "packageCheck": {
     "passed": true,
     "fileCount": 4,
     "textType": "COMPOSITE_TEXT",
@@ -219,127 +266,161 @@ Interface 不变量：
     "warnings": [],
     "details": []
   },
-  "specificationChecks": [
+  "specificationChecks": [],
+  "securityCheck": {
+    "status": "FINDINGS",
+    "findingIssueIds": ["issue-1"]
+  },
+  "issues": [
     {
-      "ruleId": "SPEC-ZIP-NAME",
-      "status": "PASS",
-      "sourceType": "SOURCE_RULE",
-      "sourceRef": "SRC-SPEC"
-    },
-    {
-      "ruleId": "SPEC-DESCRIPTION-QUALITY",
-      "status": "NOT_EVALUATED",
-      "sourceType": "SOURCE_RULE",
-      "sourceRef": "SRC-SPEC"
+      "issueId": "issue-1",
+      "ruleId": "SEC-SECRET-08",
+      "classification": "POTENTIAL_NON_COMPLIANCE",
+      "sourceSeverity": "HIGH",
+      "path": "SKILL.md",
+      "line": 42,
+      "message": "检测到疑似硬编码密码。",
+      "evidenceRedacted": "password=[REDACTED]",
+      "sourceRef": "SRC-SEC"
     }
   ],
-  "securityScan": {
-    "invoked": true,
-    "passed": true,
-    "findings": []
-  },
-  "uploadDecision": {
-    "eligible": true,
-    "basis": "EXISTING_UPLOAD_FLOW"
+  "notFullyEvaluatedRuleIds": [
+    "PKG-11",
+    "SPEC-NAME-STYLE",
+    "SPEC-DESCRIPTION-QUALITY",
+    "SPEC-BODY",
+    "SPEC-RESOURCE-SEPARATION",
+    "SPEC-LANGUAGE",
+    "SPEC-CODE-SAFETY",
+    "SPEC-DEPENDENCY",
+    "SPEC-CONTENT",
+    "SPEC-IP",
+    "SEC-IOC-06",
+    "SEC-IOC-07"
+  ],
+  "suggestions": [
+    {
+      "issueIds": ["issue-1"],
+      "message": "删除硬编码密码，改为从运行环境读取。"
+    }
+  ],
+  "revision": {
+    "status": "GENERATED",
+    "artifact": {
+      "fileName": "pdf-revised.zip",
+      "mimeType": "application/zip",
+      "sha256": "..."
+    },
+    "changedFiles": [
+      {
+        "path": "SKILL.md",
+        "issueIds": ["issue-1"]
+      }
+    ],
+    "unresolvedIssueIds": []
   },
   "sourceIssues": [],
-  "scanErrors": []
+  "errors": []
 }
 ~~~
 
-### 5.2 结果语义
+### 5.2 结论语义
 
-- <code>status=COMPLETED</code> 表示扫描流程已完成，包括包扫描失败、安全扫描失败或规范检查 <code>FAIL</code>；流程未完成时返回 <code>SCAN_ERROR</code>，错误进入 <code>scanErrors</code>。
-- <code>packageScan</code> 完整保留现有包扫描产物。
-- <code>securityScan.passed</code> 原样采用外部安全扫描器结果；Module 和 MCP Adapter 均不根据严重度重新计算。
-- <code>uploadDecision.eligible</code> 只映射现有上传流程：
-  - 包扫描失败：<code>false</code>。
-  - 包扫描通过且安全扫描失败：<code>false</code>。
-  - 包扫描和安全扫描均通过：<code>true</code>。
-  - Module 未完成且来源未定义处理方式：<code>null</code>。
-- <code>specificationChecks</code> 不改变现有上传决定；它独立表达建设规范符合情况。
-- <code>SOURCE_ISSUE</code> 只出现在 <code>sourceIssues</code>，不得混入安全 findings。
-- <code>QualityReport</code> 不包含 <code>uploadUri</code>、<code>requestId</code>、<code>toolStatus</code> 或 <code>toolErrors</code>。
+<code>conclusion.status</code>：
 
-安全 finding 保留来源检测项、来源严重度、位置和外部扫描器标识。证据可脱敏，但不得因脱敏改变是否命中。
+- <code>NON_COMPLIANT</code>：至少一个包规则或可确定建设规范明确失败。
+- <code>REVIEW_REQUIRED</code>：没有明确失败，但存在安全 finding，且来源没有定义 finding 到通过/失败的映射。
+- <code>COMPLIANT</code>：所有已执行检查均通过且没有安全 finding。
+- <code>ERROR</code>：配置缺失或检查过程未完成，不能给出有效结论。
 
-~~~json
-{
-  "ruleId": "SEC-SECRET-08",
-  "detector": "SecretsDetector",
-  "detectionItem": "硬编码密码",
-  "sourceSeverity": "HIGH",
-  "path": "SKILL.md",
-  "line": 42,
-  "evidenceRedacted": "password=[REDACTED]",
-  "sourceRef": "SRC-SEC"
-}
-~~~
+<code>conclusion.coverage</code> 独立表达覆盖范围：全部规则可执行时为 <code>FULL</code>；存在 <code>NOT_EVALUATED</code> 或仅执行了规则明确列出的部分时为 <code>PARTIAL</code>。<code>notFullyEvaluatedRuleIds</code> 列出相应规则。因此 <code>COMPLIANT + PARTIAL</code> 只表示已执行检查通过，不表示未评估要求已满足。
 
-## 6. 扫描顺序
+问题分类：
 
-1. MCP Adapter 校验输入，将 <code>uploadUri</code> 解析为 <code>SkillPackageInput</code>。
-2. Module 执行现有包扫描；失败时返回报告，不调用外部安全扫描或入库。
-3. 包扫描通过后，Module 执行建设规范检查和现有外部安全扫描，并将安全扫描结果写入 <code>t_skill_security_scan</code>。
-4. 现有平台根据安全扫描结果继续入库，或返回失败结果且不入库。
-5. Module 返回 <code>QualityReport</code>，MCP Adapter 将其放入输出 Envelope。
+- <code>CONFIRMED_NON_COMPLIANCE</code>：来源给出明确条件且目标确定失败。
+- <code>POTENTIAL_NON_COMPLIANCE</code>：检测到来源定义的可疑或安全模式，但来源没有给出最终裁决方式。
+- <code>SOURCE_LIMITATION</code>：规则自身不完整、存在歧义或无法执行。
 
-## 7. 实施约束（IMPLEMENTATION_ONLY）
+来源严重度原样保留；Module 不把严重度转换为结论。<code>SOURCE_ISSUE</code> 只进入 <code>sourceIssues</code>，不伪装成目标问题。
 
-- Module 只读上传包，不执行其中的脚本、命令或安装动作。
-- <code>QualityReport</code> 记录目标 SHA-256、Module/扫描器版本和来源包标识；稳定规则 ID 只用于来源追溯。
-- 报告和日志中的密钥、密码及 Token 必须脱敏，且不改变规则命中。
-- MCP Adapter 不持久化扫描结果。
+### 5.3 响应模式与文件产物
 
-## 8. 测试设计
+| 模式 | 报告 JSON 文件 | 报告内建议 | 修改后 ZIP |
+|---|---|---|---|
+| <code>REPORT_ONLY</code> | 返回 | 不包含 | 不返回 |
+| <code>WITH_SUGGESTIONS</code> | 返回 | 包含 | 不返回 |
+| <code>WITH_REVISED_ZIP</code> | 返回 | 包含 | 有安全修改时返回 |
 
-### 8.1 质量保证 Module Interface
+每条建议必须引用一个或多个 <code>issueId</code>。<code>WITH_REVISED_ZIP</code> 生成的新包遵守以下约束：
 
-- 校验 <code>SkillPackageInput</code>、<code>QualityReport</code> 及其传输协议隔离约束。
-- 验证 Interface 不能关闭检测器、修改阈值或覆盖严重度。
+- 以原 ZIP 为只读输入，复制未修改条目，只替换能够安全修改的 UTF-8 文本文件。
+- 新包命名为 <code>&lt;原包基本名&gt;-revised.zip</code>，并记录独立 SHA-256；不得覆盖或改变原包。
+- 保持原目录结构和未修改文件的字节，不向 Skill 包中加入检查报告。
+- 修改只处理当前报告中的问题，不新增检测条件或重新判定原检查结论。
+- 无法确定安全修改方式、目标为二进制文件或修改可能改变代码意图时，保留该问题，不猜测修改。
+- 没有任何安全修改时不生成 ZIP；报告中的 <code>revision.status</code> 为 <code>NOT_GENERATED</code>，并列出原因。
+- 修改后 ZIP 超过 MCP 响应大小限制时不转存到其他位置；报告记录 <code>OUTPUT_SIZE_LIMIT</code>，且不返回该 ZIP。
+- 生成 ZIP 后至少验证其可打开、条目路径集合正确和修改文件内容一致；这不表示修改后已经合规。
+- 报告证据保持脱敏；已检测到的密码、密钥或 Token 无法安全移除时不得生成修改后 ZIP。每项修改均可追溯到 <code>issueId</code>。
 
-### 8.2 MCP Adapter 契约
+报告文件仅保存建议、修改状态和产物元数据，不包含修改后的文件正文或 ZIP Base64。
 
-- 校验输入 Schema、<code>uploadUri</code> 到 <code>SkillPackageInput</code> 的映射和 <code>QualityReport</code> 的无损封装。
-- 验证 Adapter 错误进入 <code>toolErrors</code>，Module 错误进入 <code>scanErrors</code>。
+## 6. 检查顺序
 
-### 8.3 包扫描等价性
+1. MCP Adapter 校验 Schema 和 Base64，构造 <code>SkillPackageInput</code>。
+2. Module 校验运行配置并执行包规则；包规则失败时生成结论，不执行建设规范或安全规则。
+3. 包规则通过后执行建设规范和安全规则；未执行或仅部分执行的规则进入 <code>notFullyEvaluatedRuleIds</code>。
+4. Module 生成结论和问题列表。
+5. Module 根据 <code>responseMode</code> 选择是否生成建议和独立的修改后 ZIP。
+6. MCP Adapter 返回报告 JSON 文件，并在存在修改后 ZIP 时一并作为嵌入资源返回。
+
+整个过程只读、无网络访问、无持久化副作用。
+
+## 7. 测试设计
+
+### 7.1 Module Interface
+
+- 相同输入在三种 <code>responseMode</code> 下的结论、问题和规则状态完全相同。
+- Interface 不能关闭检测器、修改阈值、覆盖严重度或忽略问题。
+- 测试确认 Module 不写文件、数据库、对象存储或网络。
+
+### 7.2 MCP Adapter
+
+- 校验 Schema、Base64 解码、ZIP 字节映射、报告 JSON 文件和修改后 ZIP 的嵌入资源封装。
+- 无效 Schema 或 Base64 不调用 Module；无效 ZIP 作为检查结果返回。
+- 验证响应不包含修改后的文件正文，<code>skill-check://</code> URI 不触发持久化或二次获取。
+
+### 7.3 包规则
 
 - 为 SRC-PKG-MD 的 1—22 节建立测试映射。
-- 使用相同 ZIP 同时调用现有包扫描器和质量保证 Module，<code>packageScan</code> 结果必须等价。
 - 覆盖两种合法包根、缺失 <code>SKILL.md</code>、包根外路径、路径穿越、重复路径、大小限制、白名单、危险路径、文本/图片类型、危险内容和 front matter。
-- 验证 macOS 垃圾文件不参与根判断、统计、重复检查、持久化和安全扫描。
+- 验证 macOS 垃圾文件不参与根判断、统计、重复检查和安全检查。
 - 验证显式目录、隐式目录、文件类型、Content-Type 和 searchable 映射。
 
-### 8.4 建设规范检查
+### 7.4 建设规范与安全规则
 
-- ZIP 名与 <code>name</code> 原值一致和不一致。
-- 附件总大小在 50MB 边界内外。
-- 复用包扫描的 <code>SKILL.md</code>、<code>name</code> 和 <code>description</code> 结果。
-- 所有缺少确定性方法的规范固定返回 <code>NOT_EVALUATED</code>，不得由测试引入隐式启发式判断。
-
-### 8.5 安全扫描等价性
-
+- 覆盖 ZIP 名与 <code>name</code>、附件 50MB 边界及 12 项规范状态。
+- 缺少确定方法的规范固定返回 <code>NOT_EVALUATED</code>，不引入隐式启发式判断。
 - 15 类检测器的 98 个检测项各有命中样例，并覆盖原文跳过规则。
-- 相同包在现有外部安全扫描器和质量保证 Module 中的 <code>passed</code>、finding 和来源严重度必须等价。
-- <code>df.info()</code>、<code>user: zh</code> 和 <code>writer.encrypt(...)</code> 测试记录现有扫描器实际行为，不把期望的误报修复或漏报补偿写入当前规则。
-- 原始密码、密钥和 Token 不出现在 <code>QualityReport</code>、MCP 响应或日志中。
+- <code>df.info()</code>、<code>user: zh</code> 和 <code>writer.encrypt(...)</code> 只记录来源规则的实际匹配结果，不增加豁免或补漏。
+- 原始密码、密钥和 Token 不出现在报告证据、建议或日志中。
 
-### 8.6 流程
+### 7.5 建议与修改后 ZIP
 
-- 包扫描失败后不调用外部安全扫描。
-- 包扫描通过后保存外部安全扫描结果。
-- 两层扫描的通过/失败与现有上传入库流程一致。
-- Module 错误不产生虚假的 <code>eligible=true</code>。
-- MCP Adapter 错误不调用质量保证 Module，且不返回伪造的 <code>QualityReport</code>。
+- <code>REPORT_ONLY</code> 不执行 Remediation Builder。
+- 建议和修改条目只引用已存在的 <code>issueId</code>，且不改变原检查结果。
+- 不支持安全修改时返回原因，不猜测代码意图。
+- 验证原 ZIP 的字节和 SHA-256 不变，修改后 ZIP 使用新文件名和独立 SHA-256。
+- 验证修改后 ZIP 可打开、条目路径正确、未修改文件字节不变，且报告未写入包内。
+- Tool 调用后文件系统和数据库状态不变。
 
-## 9. 验收标准
+## 8. 验收标准
 
 - Module 与 MCP Adapter 符合第 3—5 节 Interface 和契约。
 - 22 节包规则、12 项建设规范、98 项安全规则及 15 项来源限制均可追溯。
-- 扫描结果、短路行为和 <code>t_skill_security_scan</code> 保存顺序与现有实现一致。
-- 第 2.3 节范围外能力未实现；恶意文件检测和大模型扫描保持未启用。
-- <code>SOURCE_ISSUE</code> 不改变规则行为，敏感证据完成脱敏。
+- 三种响应模式只影响报告建议和修改后 ZIP，不影响结论和问题列表。
+- Tool 不上传、保存、入库、发布或覆盖原 Skill；修改后 ZIP 只作为独立响应资源返回。
+- 范围外检测未实现；<code>SOURCE_ISSUE</code> 不改变规则行为，敏感证据完成脱敏。
 
 ## 附录 A：包扫描规则
 
@@ -371,6 +452,8 @@ Interface 不变量：
 | PKG-22 | 22 | 保持包扫描与外部安全扫描分层、macOS 垃圾忽略、平台生成版本号和文本类型含义。 |
 
 ZIP 无法打开时保留原错误信息 <code>zip 文件无法正常打开</code>。无法识别合法包根时保留原错误信息 <code>SKILL.md 必须位于 ZIP 根目录，或位于唯一顶层目录下</code>。
+
+以上表格保留来源行为，不把原上传要求改写成检查规则。本 Tool 的映射为：PKG-02、PKG-09 和 PKG-14 所需配置由 <code>InspectionPolicy</code> 提供；PKG-04 的忽略项不参与任何检查；PKG-20 只保留检查顺序和短路；PKG-22 只保留规则分层、垃圾文件忽略和文本类型，Tool 不生成版本号或执行入库。
 
 ### A.2 路径和包根
 
@@ -406,9 +489,9 @@ ZIP 无法打开时保留原错误信息 <code>zip 文件无法正常打开</cod
 - 业务文件数量上限：1000，错误码 <code>FILE_COUNT_EXCEEDED</code>。
 - 单个解压后文件上限：10MB，即 10485760 字节，错误码 <code>SINGLE_FILE_SIZE_EXCEEDED</code>。
 - 解压后总大小上限：200MB，即 209715200 字节，错误码 <code>TOTAL_UNCOMPRESSED_SIZE_EXCEEDED</code>。
-- ZIP 原文件大小上限由 <code>skill.upload.max-zip-bytes</code> 读取。
-- 扩展名白名单从平台配置读取；文档未列出的值不得自行补入。
-- <code>properties</code> 只有在平台配置中存在时才允许，不能因代码常量存在而放行。
+- ZIP 原文件大小上限由 <code>InspectionPolicy.maxZipBytes</code> 提供，对应来源中的 <code>skill.upload.max-zip-bytes</code>。
+- 扩展名白名单由 <code>InspectionPolicy.allowedExtensions</code> 提供；文档未列出的值不得自行补入。
+- <code>properties</code> 只有在 <code>allowedExtensions</code> 中存在时才允许，不能因代码常量存在而放行。
 
 ### A.4 内容类型
 
@@ -452,7 +535,7 @@ md, txt, json, yml, yaml, js, ts, py, java, xml, html, css, sh
 - <code>title</code> 可选；为空时使用 <code>name</code>。
 - <code>version</code> 不允许填写；非空时失败。
 - <code>tags</code> 可选；为空时使用空数组。
-- <code>name</code> 使用项目配置正则。
+- <code>name</code> 使用 <code>InspectionPolicy.skillNamePattern</code>。
 
 对应错误码：
 
@@ -514,12 +597,12 @@ md, txt, json, yml, yaml, js, ts, py, java, xml, html, css, sh
 |---|---|---|
 | SPEC-ZIP-NAME | ZIP 包名字与 Skill 名字完全一致。 | 对 ZIP 文件名去掉 <code>.zip</code> 后与 front matter 的 <code>name</code> 做原值精确比较；不增加大小写或 Unicode 正规化。 |
 | SPEC-SKILL-MD | ZIP 至少包含一个有效 <code>SKILL.md</code>，含 <code>name</code> 和 <code>description</code>。 | 复用包扫描结果。 |
-| SPEC-NAME-STYLE | <code>name</code> 通常使用小写字母和连字符。 | 保留为来源建议；不替代平台名称正则，不单独阻断。 |
+| SPEC-NAME-STYLE | <code>name</code> 通常使用小写字母和连字符。 | <code>NOT_EVALUATED</code>；保留为来源建议，不替代 <code>InspectionPolicy.skillNamePattern</code>。 |
 | SPEC-DESCRIPTION-QUALITY | <code>description</code> 用 1—2 句话自包含地说明功能、场景和触发条件，避免歧义。 | <code>NOT_EVALUATED</code>；原文未给出确定性算法，且大模型扫描未启用。 |
 | SPEC-BODY | 正文按任务灵活组织，不强制模板；逻辑或步骤应清晰、闭环并覆盖正常与异常场景。 | <code>NOT_EVALUATED</code>；不增加正文非空、章节或关键词规则。 |
 | SPEC-RESOURCE-SEPARATION | 长文档、脚本和资源与正文分离。 | <code>NOT_EVALUATED</code>；不增加目录或引用规则。 |
 | SPEC-LANGUAGE | 表述简洁，无模糊词汇。 | <code>NOT_EVALUATED</code>。 |
-| SPEC-CODE-SAFETY | 不得含恶意或攻击性内容，包括 SQL 注入、XSS；不得用未验证输入构造 SQL 或 HTML。 | 安全扫描结果原样报告；来源未定义的 SQLi、XSS 和数据流分析部分标记 <code>NOT_EVALUATED</code>。 |
+| SPEC-CODE-SAFETY | 不得含恶意或攻击性内容，包括 SQL 注入、XSS；不得用未验证输入构造 SQL 或 HTML。 | 安全检查结果原样报告；来源未定义的 SQLi、XSS 和数据流分析部分标记 <code>NOT_EVALUATED</code>。 |
 | SPEC-DEPENDENCY | 不应依赖沙箱默认镜像范围外的安装包。 | 未取得默认镜像依赖清单时为 <code>NOT_EVALUATED</code>，不得自行建立清单。 |
 | SPEC-ATTACHMENT-SIZE | 除 <code>SKILL.md</code> 外的附件总大小不超过 50MB。 | 对标准化业务文件求和并排除 <code>SKILL.md</code>；结果为 <code>PASS</code> 或 <code>FAIL</code>。该规范结果不改写包扫描的 200MB 上限。 |
 | SPEC-CONTENT | 不得包含违法、违规、色情、暴力等不良信息。 | <code>NOT_EVALUATED</code>；来源未提供检测器。 |
@@ -531,17 +614,18 @@ md, txt, json, yml, yaml, js, ts, py, java, xml, html, css, sh
 - <code>FAIL</code>：确定性要求不满足。
 - <code>NOT_EVALUATED</code>：来源有要求，但没有足够规则或已启用能力自动判断。
 
-不使用综合分数，也不把 <code>NOT_EVALUATED</code> 转换成人工复核或上传阻断。
+不使用综合分数，也不把 <code>NOT_EVALUATED</code> 转换为 <code>NON_COMPLIANT</code>。
 
-## 附录 C：外部安全扫描规则
+## 附录 C：安全检查规则
 
 ### C.1 通用行为
 
-- 质量保证 Module 通过 Existing Security Scanner Adapter 复用现有外部安全扫描器；Module 与 MCP Adapter 均不重写正则、匹配边界、大小写规则或文件范围。
-- finding 保留 SRC-SEC 中的严重度；<code>HIGH/CRITICAL</code> 和 <code>MEDIUM/HIGH</code> 等原文复合值不得由 Module 或 MCP Adapter 自行归一化。
+- Security Rule Evaluator 只执行本附录明确列出的条件，不补写正则、匹配边界、大小写规则或文件范围。
+- 原文使用“等”或缺少匹配细节时，只执行明确列出的部分，并将缺失范围记录为 <code>SOURCE_ISSUE</code>。
+- finding 保留 SRC-SEC 中的严重度；<code>HIGH/CRITICAL</code> 和 <code>MEDIUM/HIGH</code> 等复合值不得自行归一化。
 - 所有检测器默认跳过 <code>.git</code>、<code>__pycache__</code>、<code>.venv</code> 和 <code>node_modules</code> 目录。
 - 恶意文件检测和大模型扫描保持未启用。
-- 安全扫描器的 <code>passed</code> 由 Module 原样接收，并由 MCP Adapter 原样封装；两者都不从 finding 严重度重新推导。
+- 来源没有定义 finding 到通过/失败的映射；安全 finding 按第 5.2 节产生 <code>REVIEW_REQUIRED</code>，不从严重度推导最终结论。
 
 ### C.2 SecretsDetector
 
@@ -741,6 +825,8 @@ virus, botnet, exfil, dropship, darkweb, leak, dumped, crack
 | SEC-IOC-06 | 已知恶意 IP | IP 匹配外部威胁情报数据库 | CRITICAL |
 | SEC-IOC-07 | 已知恶意 URL | URL 匹配外部威胁情报数据库 | CRITICAL |
 
+来源没有定义威胁情报数据源或查询 Interface，因此 <code>SEC-IOC-06</code> 和 <code>SEC-IOC-07</code> 在当前设计中固定为 <code>NOT_EVALUATED</code>；Tool 不自行联网查询。
+
 内置可疑 TLD：
 
 ~~~text
@@ -754,18 +840,18 @@ virus, botnet, exfil, dropship, darkweb, leak, dumped, crack
 
 | 编号 | 来源限制 | 处理 |
 |---|---|---|
-| SI-01 | SRC-PKG-DOCX 的 ZIP 基础校验片段不完整，而 SRC-PKG-MD 内容完整。 | 包扫描复用现有平台实现；不从残缺片段推导规则。 |
-| SI-02 | <code>skill.upload.max-zip-bytes</code>、扩展名白名单和 <code>name</code> 正则没有给出最终配置值。 | 运行时读取平台配置并记录配置摘要；不硬编码替代值。 |
-| SI-03 | “文本看起来像二进制”的具体算法没有写明。 | 复用现有包扫描器，不重新定义算法。 |
+| SI-01 | SRC-PKG-DOCX 的 ZIP 基础校验片段不完整，而 SRC-PKG-MD 内容完整。 | 以内容完整的 SRC-PKG-MD 为依据；不从残缺片段推导规则。 |
+| SI-02 | <code>skill.upload.max-zip-bytes</code>、扩展名白名单和 <code>name</code> 正则没有给出最终配置值。 | 通过 <code>InspectionPolicy</code> 显式提供；缺失时返回 <code>ERROR</code>，不硬编码替代值。 |
+| SI-03 | “文本看起来像二进制”的具体算法没有写明。 | PKG-11 的该部分标记为 <code>NOT_EVALUATED</code>；不自创算法。 |
 | SI-04 | 包扫描危险内容只检查前 64KB，可能漏掉后续内容。 | 保持 64KB，不扩展为全文扫描。 |
 | SI-05 | SVG 当前默认通过，没有魔数或 XML 安全校验。 | 保持默认通过。 |
-| SI-06 | <code>__MACOSX/**</code> 忽略规则与 <code>__macosx</code> 高风险片段的大小写关系未说明。 | 保持现有实现，不增加大小写规则。 |
+| SI-06 | <code>__MACOSX/**</code> 忽略规则与 <code>__macosx</code> 高风险片段的大小写关系未说明。 | 按来源字面值区分大小写，不增加折叠规则。 |
 | SI-07 | description、正文质量、SQLi/XSS 数据流、依赖范围、内容合规和知识产权要求缺少确定性检测方法。 | 返回 <code>NOT_EVALUATED</code>，不使用自创启发式规则。 |
-| SI-08 | 部分安全项使用“等”，且原文未给出完整正则、边界、大小写和适用文件范围。 | 复用现有外部扫描器，不扩写关键词。 |
-| SI-09 | <code>HIGH/CRITICAL</code>、<code>MEDIUM/HIGH</code> 没有单一严重度选择规则；严重度与安全扫描 <code>passed</code> 的映射也未说明。 | 原样保留来源或扫描器结果；Module 与 MCP Adapter 均不归一化、不裁决。 |
+| SI-08 | 部分安全项使用“等”，且原文未给出完整正则、边界、大小写和适用文件范围。 | 只执行明确列出的条件；缺失范围记录为限制，不扩写关键词。 |
+| SI-09 | <code>HIGH/CRITICAL</code>、<code>MEDIUM/HIGH</code> 没有单一严重度选择规则；严重度与安全扫描 <code>passed</code> 的映射也未说明。 | 原样保留来源严重度；finding 进入 <code>REVIEW_REQUIRED</code>，不归一化严重度。 |
 | SI-10 | PrivilegeEscalationDetector 跳过 Markdown 等文档，可能漏掉文档中的命令。 | 保持跳过规则。 |
 | SI-11 | <code>df.info()</code> 可能被 IOC 的 <code>.info</code> 规则当作域名。 | 该样例只记录潜在误报，不增加成员调用豁免。 |
 | SI-12 | <code>user: zh</code> 可能被用户名规则命中。 | 该样例只记录潜在误报，不增加 Markdown 或语言代码豁免。 |
 | SI-13 | <code>writer.encrypt("userpassword", "ownerpassword")</code> 不符合窄版 <code>password=</code> 条件，可能漏报。 | 不增加调用语义规则。 |
 | SI-14 | 可疑 TLD 列表包含可合法使用的 TLD，单独命中只能表达来源定义的可疑性。 | 保留原严重度，不升级为已知恶意。 |
-| SI-15 | 已知恶意 IP/URL 依赖外部数据库，但来源没有定义数据源、版本和不可用行为。 | 原样使用现有外部扫描器结果；Module 不自行查询公网或定义陈旧策略，MCP Adapter 不承担威胁情报职责。 |
+| SI-15 | 已知恶意 IP/URL 依赖外部数据库，但来源没有定义数据源、版本和不可用行为。 | <code>SEC-IOC-06</code> 和 <code>SEC-IOC-07</code> 返回 <code>NOT_EVALUATED</code>；Tool 不自行查询公网。 |

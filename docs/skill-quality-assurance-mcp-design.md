@@ -1,143 +1,107 @@
 # Skill 质量保证 MCP Tool 设计文档
 
-| 项目 | 内容 |
+| 项目 | 最终状态 |
 |---|---|
-| 状态 | Draft |
-| 日期 | 2026-08-19 |
+| 文档状态 | Final |
+| 生效日期 | 2026-08-19 |
+| MCP Tool | <code>scan_skill_quality</code> |
+| 输入范围 | Skill ZIP 上传包 |
 | 目标读者 | Skill 平台研发、安全研发、测试、运维与审核人员 |
-| 建议工具名 | `scan_skill_quality` |
-| 默认策略 | `enterprise-intranet-v1` |
 
-## 1. 结论
+## 1. 设计结论
 
-将 Skill 质量保证封装为一个 MCP Tool 是可行的。设计上只暴露一个稳定的外部接口，把包结构校验、元数据校验、内容质量检查、安全检测、上下文判定和企业策略裁决收进一个深模块。
+系统通过一个只读 MCP Tool 对 Skill ZIP 上传包执行质量保证。Tool 的外部 Interface 只有一次扫描操作；ZIP 解析、包规则校验、建设规范检查、外部安全扫描和报告组装均封装在 <code>SkillQualityScanner</code> 深模块内。
 
-该工具默认只读，不执行 Skill 中的脚本，不自动修复文件，不直接发布 Skill。生产上传链路采用失败关闭策略：结构扫描未通过、存在确认的 CRITICAL/HIGH 风险或扫描器自身未能完成时，不得入库。
+本设计固定以下行为：
 
-## 2. 设计依据
+- 只扫描平台已经接收的 ZIP 上传包。
+- 先执行现有包扫描；包扫描失败后不调用外部安全扫描，也不入库。
+- 包扫描通过后调用现有外部安全扫描，并按原上传流程保存安全扫描结果。
+- Skill 建设规范中能够确定性判断的要求生成规范检查结果；无法从原文确定自动判定方法的要求返回 <code>NOT_EVALUATED</code>。
+- 不执行、安装、修改、修复、重新打包或发布 Skill 中的任何内容。
+- 不新增原文未定义的检测条件、跳过条件、严重度或准入映射。
 
-本文综合以下资料：
+## 2. 设计范围与约束
 
-1. `C:\Users\simon\Documents\nari\skill-upload-package-scan-rules(1).md`
-2. `C:\Users\simon\Documents\nari\原版-skills建设规范_0609(3).docx`
-3. `C:\Users\simon\Documents\nari\Skill 上传包扫描规则说明.docx`
-4. `C:\Users\simon\Documents\nari\0720扫描规则说明.docx`
-5. MCP Tools 官方规范：<https://modelcontextprotocol.io/specification/2025-06-18/server/tools>
+### 2.1 来源文档
 
-资料存在冲突时采用以下优先级：
-
-1. 平台实际配置和生产安全策略；
-2. 上传包扫描规则；
-3. Skill 建设规范；
-4. 文档中的示例值。
-
-每次扫描必须在报告中记录 `policyVersion`、`rulesetVersion`、`engineVersion` 和配置摘要哈希，保证结果可复现、可审计。
-
-## 3. 目标与非目标
-
-### 3.1 目标
-
-- 为上传前预检和平台正式上传提供同一套质量保证能力。
-- 保持包扫描和安全扫描两层语义，同时通过一次 MCP 调用返回统一报告。
-- 支持 ZIP 上传包、开发目录和单个 `SKILL.md` 三种扫描范围。
-- 输出机器可判定、人员可解释的结构化发现和最终结论。
-- 对密码、密钥等证据自动脱敏。
-- 支持内网离线部署、规则版本化和离线威胁情报。
-- 降低纯正则造成的误报，同时保留无法确认时的人工复核入口。
-
-### 3.2 非目标
-
-- 不执行 Skill、脚本、安装命令或网络请求。
-- 不在首版中自动修改或重新打包 Skill。
-- 不把一个综合分数作为唯一准入依据。
-- 不以本工具替代杀毒、沙箱、人工审核、等保测评或内容合规审核。
-- `UPLOAD_PACKAGE` 模式只接受 ZIP；RAR 不是平台上传格式。
-
-## 4. 核心术语
-
-| 术语 | 定义 |
-|---|---|
-| 上传包 | 用户提交的 ZIP 文件。 |
-| 包根 | 根目录或唯一顶层目录中 `SKILL.md` 所在的逻辑根。 |
-| 业务文件 | 标准化、剥离包根并排除系统垃圾文件后的文件。 |
-| 包扫描 | ZIP、路径、大小、类型、根目录和 front matter 等确定性校验。 |
-| 质量扫描 | description、指令完整性、依赖、资源引用和建设规范检查。 |
-| 安全扫描 | 代码内容、危险行为、供应链和 IOC 检测。 |
-| 发现 | 一条带位置、规则、严重度、置信度和处置建议的扫描结果。 |
-| 策略 | 将发现转换为阻断、复核或放行结论的版本化规则集合。 |
-| 规则集 | 检测器及其模式、阈值、白名单和上下文排除规则的版本化集合。 |
-
-## 5. 关键规则冲突与裁决
-
-| 主题 | 资料中的口径 | 设计裁决 |
+| 来源编号 | 文档 | 在本设计中的用途 |
 |---|---|---|
-| 附件大小 | 建设规范要求除 `SKILL.md` 外附件总计不超过 50MB；包扫描安全上限为解压后 200MB | 同时执行：200MB 是防解压炸弹硬上限，50MB 是 Skill 质量准入上限。 |
-| 内容采样 | 包扫描只读取每个文件前 64KB | 包扫描保持 64KB 快速校验；安全扫描对允许的文本文件全文分块扫描。 |
-| ZIP 名称 | 建设规范要求 ZIP 名与 Skill 名完全一致 | 生产策略默认阻断不一致；开发预检可给出明确修复提示。 |
-| `name` 格式 | 建设规范建议小写字母和连字符；上传规则以项目配置正则为准 | 不在实现中硬编码，统一由策略配置提供正则。 |
-| `version` | 上传规则禁止用户填写 | 只要 front matter 中存在非空 `version` 即阻断。 |
-| 扩展名白名单 | 文档未完整展示，说明以配置为准 | 从平台配置加载；扫描报告记录白名单配置哈希。 |
-| macOS 垃圾文件 | 上传规则明确忽略 | 不计数、不入库、不进入任何安全检测。 |
-| 恶意文件与大模型扫描 | 0720 文档说明当前未启用 | 报告必须显示覆盖缺口；企业增强阶段通过 Adapter 启用，不能默认为已检测。 |
+| SRC-PKG-MD | <code>skill-upload-package-scan-rules(1).md</code> | 包扫描 1—22 节、错误码、扫描产物和上传顺序的完整依据。 |
+| SRC-SPEC | <code>原版-skills建设规范_0609(3).docx</code> | Skill 结构、描述、正文、代码、依赖、附件和内容规范。 |
+| SRC-PKG-DOCX | <code>Skill 上传包扫描规则说明.docx</code> | 与 SRC-PKG-MD 交叉核对；不从缺失或残缺片段推导新规则。 |
+| SRC-SEC | <code>0720扫描规则说明.docx</code> | 当前启用的 15 类安全检测器、检测项、严重度和跳过规则。 |
 
-## 6. 模块设计
+包扫描的配置值以平台运行时配置为准。外部安全扫描的具体匹配实现和 <code>passed</code> 结果以现有安全扫描器为准。本设计不替代这两项现有实现重新解释规则。
 
-外部 seam 是 MCP Tool 的接口。调用者只需提供目标引用和扫描范围，复杂实现保留在 `SkillQualityScanner` 模块内部。
+### 2.2 内容分类
 
-```text
+| 分类 | 含义 | 是否改变扫描结果 |
+|---|---|---|
+| <code>SOURCE_RULE</code> | 来源文档明确写出的检测、校验、跳过、严重度或流程规则。 | 是，严格按来源执行。 |
+| <code>SOURCE_ISSUE</code> | 来源规则存在缺失、歧义、可能误报或可能漏报。 | 否，只记录限制。 |
+| <code>IMPLEMENTATION_ONLY</code> | MCP 封装、版本记录、脱敏、审计和错误表达。 | 否，不得新增、删除、升级或降级命中。 |
+| <code>PROPOSED_CHANGE</code> | 对来源规则的候选修改。 | 否，本最终设计不包含任何已启用的候选修改。 |
+
+只有 <code>SOURCE_RULE</code> 可以影响规则命中和原有上传结果。<code>SOURCE_ISSUE</code> 不得被实现为白名单、例外、补充正则或严重度调整。
+
+### 2.3 明确不在范围内
+
+- RAR、目录和单个 <code>SKILL.md</code> 输入。
+- 加密 ZIP、符号链接、硬链接、设备文件和嵌套压缩包的新增拒绝规则。
+- Unicode 等价路径和大小写折叠冲突的新增拒绝规则。
+- SVG XML 解析；来源规则规定 SVG 当前不做魔数校验，默认通过。
+- YAML 重复键、不安全类型、Markdown 正文非空和本地引用存在性的新增阻断。
+- 将包扫描的 64KB 样本规则扩展为全文扫描。
+- AST、代码围栏语义、上下文豁免或语义补漏。
+- 把安全严重度自行转换为 <code>PASS</code>、<code>REVIEW</code> 或 <code>REJECT</code>。
+- 恶意文件、YARA、杀毒、大模型、SBOM、CVE、签名、内容合规和动态沙箱扫描。
+- 自动修复、例外审批、分阶段增强和未来路线图。
+
+包扫描、建设规范、安全扫描和已知来源限制分别见附录 A—D；四个附录均属于本设计的规范性内容。
+
+## 3. Module 与 Interface
+
+### 3.1 Module
+
+<code>SkillQualityScanner</code> 是唯一业务 Module。MCP 调用者不需要了解 ZIP entry、包根识别、规则顺序、安全扫描器或报告存储。
+
+~~~text
 MCP Client
     │
     ▼
 MCP Adapter: scan_skill_quality
     │
     ▼
-SkillQualityScanner.scan(request) -> ScanReport
-    ├── Target Resolver
-    ├── Safe Package Reader
-    ├── Package Inspector
-    ├── Metadata & Quality Linter
-    ├── Security Detector Orchestrator
-    ├── Context Adjudicator
-    ├── Policy Engine
+SkillQualityScanner.scan(uploadUri, requestId?) -> ScanReport
+    ├── Upload Resolver
+    ├── Existing Package Scanner Adapter
+    ├── Specification Checker
+    ├── Existing Security Scanner Adapter
     └── Report Builder
-```
+~~~
 
-`SkillQualityScanner` 是深模块：调用者不需要理解 ZIP 读取、规则顺序、去重、上下文判定、证据脱敏或结论计算。
+MCP Adapter 是外部 seam。包扫描器和外部安全扫描器是内部 seam 上的 Adapter；它们复用现有行为，不在 MCP 层重写检测规则。
 
-### 6.1 外部接口
+### 3.2 Interface
 
-模块只提供一个主要操作：
+Module 只暴露一个操作：
 
-```text
-scan(request: ScanRequest) -> ScanReport
-```
+~~~text
+scan(uploadUri: string, requestId?: string) -> ScanReport
+~~~
 
-接口不允许调用者逐项开关安全检测，也不允许调用者降低阻断阈值。生产环境中的策略选择必须经过服务端授权。
+Interface 不提供规则开关、阈值覆盖、严重度覆盖、策略选择或忽略规则参数。
 
-### 6.2 内部 seams 与 Adapters
+## 4. MCP Tool 契约与结果模型
 
-只在确实存在多种实现时设置内部 seam：
+### 4.1 Tool 元数据
 
-| Seam | Adapters | 用途 |
-|---|---|---|
-| Target Resolver | `UploadHandleAdapter`、`LocalFileAdapter` | 生产使用上传句柄；开发环境可使用受限本地路径。 |
-| Package Reader | `ZipPackageAdapter`、`DirectoryAdapter`、`MarkdownAdapter` | 统一产出标准化业务文件流。 |
-| Threat Intelligence | `OfflineThreatIntelAdapter`、测试 Fake | 查询内网 IOC 快照，禁止直接访问公网。 |
-| Malware Scanner | `ClamAvYaraAdapter`、`DisabledAdapter` | 显式体现恶意文件扫描是否启用。 |
-| Semantic Analyzer | `InternalModelAdapter`、`DisabledAdapter` | 可选质量语义检查，禁用时报告覆盖缺口。 |
-| Report Store | `SqlReportStoreAdapter`、内存 Fake | 生产审计和测试隔离。 |
-
-各检测器属于模块内部实现，不单独暴露为 MCP Tools，避免形成大量浅接口。
-
-## 7. MCP Tool 接口
-
-### 7.1 Tool 元数据
-
-```json
+~~~json
 {
   "name": "scan_skill_quality",
   "title": "Skill 质量与安全扫描",
-  "description": "只读扫描 Skill 上传包、开发目录或单个 SKILL.md，返回结构、质量、安全和企业准入结论。不会执行或修改目标文件。",
+  "description": "只读扫描平台已接收的 Skill ZIP 上传包，返回现有包扫描、建设规范检查和现有外部安全扫描结果。不会执行或修改上传包。",
   "annotations": {
     "readOnlyHint": true,
     "destructiveHint": false,
@@ -145,32 +109,21 @@ scan(request: ScanRequest) -> ScanReport
     "openWorldHint": false
   }
 }
-```
+~~~
 
-当启用实时外部情报查询时，`openWorldHint` 应改为 `true`；企业内网默认使用版本化离线情报快照。
+### 4.2 输入 Schema
 
-### 7.2 输入
-
-```json
+~~~json
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["targetUri"],
+  "required": ["uploadUri"],
   "properties": {
-    "targetUri": {
+    "uploadUri": {
       "type": "string",
-      "description": "生产使用 upload://<id>；开发环境可使用受白名单限制的 file URI。"
-    },
-    "scope": {
-      "type": "string",
-      "enum": ["AUTO", "UPLOAD_PACKAGE", "DIRECTORY", "SKILL_MD_ONLY"],
-      "default": "AUTO"
-    },
-    "policyProfile": {
-      "type": "string",
-      "default": "enterprise-intranet-v1",
-      "description": "服务端必须鉴权，调用者不得选择更宽松策略绕过门禁。"
+      "pattern": "^upload://[A-Za-z0-9._-]+$",
+      "description": "平台生成的不可伪造上传句柄。"
     },
     "requestId": {
       "type": "string",
@@ -178,445 +131,614 @@ scan(request: ScanRequest) -> ScanReport
     }
   }
 }
-```
+~~~
 
-### 7.3 输入不变量
+输入不变量：
 
-- `UPLOAD_PACKAGE` 只接受未加密 ZIP。
-- `SKILL_MD_ONLY` 只读取指定 Markdown 文件，不读取同目录 ZIP 或其他文件。
-- `AUTO` 根据受信任文件类型识别，不根据用户提供的扩展名直接决定。
-- `file://` 仅在开发模式开放，且目标必须位于配置的允许根目录内。
-- 生产模式优先使用不可伪造的 `upload://` 句柄，不接受任意 Windows/Linux 路径。
-- 同一目标、相同规则集、策略、引擎和情报快照应产生确定性结果。
+- <code>uploadUri</code> 只能解析到平台上传临时区中的一个文件。
+- 原始文件名和原始字节由 Upload Resolver 提供，调用者不能在参数中另行覆盖。
+- 上传目标仍由包扫描判断是否为空、是否为 <code>.zip</code>、是否含 ZIP 魔数以及能否打开。
+- Tool 不接受本地路径、Windows 路径、HTTP URL 或内联文件内容。
 
-### 7.4 输出
+### 4.3 输出 Schema
 
-MCP 返回 `structuredContent`，同时提供简短文本摘要以兼容只读取文本结果的客户端。
-
-```json
+~~~json
 {
   "scanId": "sq_01...",
   "requestId": "optional-client-id",
-  "verdict": "REJECT",
+  "status": "COMPLETED",
   "target": {
-    "uri": "upload://12345",
-    "sha256": "...",
-    "scope": "UPLOAD_PACKAGE"
+    "uploadUri": "upload://12345",
+    "originalFileName": "pdf.zip",
+    "sha256": "..."
   },
   "versions": {
-    "engineVersion": "1.0.0",
-    "rulesetVersion": "2026.08.1",
-    "policyVersion": "enterprise-intranet-v1.0",
-    "threatIntelSnapshot": "2026-08-19T00:00:00Z"
+    "moduleVersion": "1.0.0",
+    "packageScannerVersion": "...",
+    "securityScannerVersion": "...",
+    "sourceBundleId": "..."
   },
   "coverage": {
-    "package": "ENABLED",
-    "quality": "ENABLED",
-    "security": "ENABLED",
-    "malware": "DISABLED",
-    "semantic": "DISABLED",
-    "threatIntel": "OFFLINE_SNAPSHOT"
+    "packageScan": "ENABLED",
+    "specificationCheck": "PARTIAL",
+    "externalSecurityScan": "ENABLED",
+    "malwareFileScan": "DISABLED_BY_SOURCE",
+    "llmScan": "DISABLED_BY_SOURCE"
   },
-  "summary": {
-    "critical": 0,
-    "high": 1,
-    "medium": 2,
-    "low": 0,
-    "info": 1,
-    "blocking": 1,
-    "needsReview": 2
-  },
-  "package": {
-    "rootDir": "pdf",
+  "packageScan": {
+    "passed": true,
     "fileCount": 4,
+    "textType": "COMPOSITE_TEXT",
     "totalSizeBytes": 18020,
-    "textType": "COMPOSITE_TEXT"
+    "rootDir": "pdf",
+    "metadata": {},
+    "entries": [],
+    "errors": [],
+    "warnings": [],
+    "details": []
   },
-  "findings": [
+  "specificationChecks": [
     {
-      "ruleId": "SEC_SECRET_HARDCODED_PASSWORD",
-      "source": "SECURITY",
-      "category": "SECRETS",
-      "severity": "HIGH",
-      "confidence": "HIGH",
-      "disposition": "CONFIRMED",
-      "blocking": true,
-      "location": {
-        "path": "SKILL.md",
-        "line": 231,
-        "column": 6
-      },
-      "message": "发现硬编码密码",
-      "evidenceRedacted": "--password=[REDACTED]",
-      "remediation": "改为运行时安全输入、环境变量或企业密钥管理。",
-      "fingerprint": "..."
+      "ruleId": "SPEC-ZIP-NAME",
+      "status": "PASS",
+      "sourceType": "SOURCE_RULE",
+      "sourceRef": "SRC-SPEC"
+    },
+    {
+      "ruleId": "SPEC-DESCRIPTION-QUALITY",
+      "status": "NOT_EVALUATED",
+      "sourceType": "SOURCE_RULE",
+      "sourceRef": "SRC-SPEC"
     }
   ],
-  "errors": [],
-  "timingMs": 412
+  "securityScan": {
+    "invoked": true,
+    "passed": true,
+    "findings": []
+  },
+  "uploadDecision": {
+    "eligible": true,
+    "basis": "EXISTING_UPLOAD_FLOW"
+  },
+  "sourceIssues": [],
+  "toolErrors": []
 }
-```
+~~~
 
-完整 `package` 域保留现有上传包扫描产物：`passed`、`fileCount`、`textType`、`totalSizeBytes`、`rootDir`、`metadata`、`entries`、`errors`、`warnings` 和 `details`。每个 `entries` 节点包含 `rawPath`、`normalizedPath`、`nodeType`、`nodeName`、`parentPath`、`pathDepth`、`sizeBytes`、`sha256`、`contentType`、`fileType` 和 `searchable`，供后续入库和文件树直接复用。
+### 4.4 输出语义
 
-### 7.5 结论枚举
+- <code>status</code> 仅表示 MCP 扫描调用是否完成，取值为 <code>COMPLETED</code> 或 <code>TOOL_ERROR</code>。
+- <code>packageScan</code> 完整保留现有包扫描产物。
+- <code>securityScan.passed</code> 原样采用外部安全扫描器结果；MCP 不根据严重度重新计算。
+- <code>uploadDecision.eligible</code> 只映射现有上传流程：
+  - 包扫描失败：<code>false</code>。
+  - 包扫描通过且安全扫描失败：<code>false</code>。
+  - 包扫描和安全扫描均通过：<code>true</code>。
+  - Tool 或外部扫描器未完成且来源未定义处理方式：<code>null</code>。
+- <code>specificationChecks</code> 不改变现有上传决定；它独立表达建设规范符合情况。
+- <code>SOURCE_ISSUE</code> 只出现在 <code>sourceIssues</code>，不得混入安全 findings。
 
-| Verdict | 含义 |
-|---|---|
-| `PASS` | 全部必需检查完成且没有阻断项。 |
-| `PASS_WITH_WARNINGS` | 没有阻断项，但存在 LOW/INFO 或明确的非阻断提示。 |
-| `REVIEW` | 存在无法自动确认的风险、情报不可用或语义质量问题，需要人工复核。 |
-| `REJECT` | 结构不合法或存在策略规定的确认风险。 |
-| `ERROR` | 扫描器未能完成，不能代表目标安全。生产上传必须失败关闭。 |
+安全 finding 保留来源检测项、来源严重度、位置和外部扫描器标识。证据可脱敏，但不得因脱敏改变是否命中。
 
-## 8. 扫描流程
+~~~json
+{
+  "ruleId": "SEC-SECRET-08",
+  "detector": "SecretsDetector",
+  "detectionItem": "硬编码密码",
+  "sourceSeverity": "HIGH",
+  "path": "SKILL.md",
+  "line": 42,
+  "evidenceRedacted": "password=[REDACTED]",
+  "sourceRef": "SRC-SEC"
+}
+~~~
 
-```text
-解析并授权 targetUri
-  → 计算目标哈希
-  → 安全读取 ZIP/目录/Markdown
-  → 路径标准化与包根识别
-  → 包结构、大小、类型和元数据扫描
-  → 若结构阻断：构建 REJECT 报告并停止
-  → 全文分块内容扫描
-  → 质量规则扫描
-  → 安全检测器扫描
-  → 上下文判定与重复发现合并
-  → 企业策略裁决
-  → 脱敏并构建结构化报告
-  → 持久化审计结果
-```
+## 5. 最终扫描顺序
 
-包扫描和安全扫描仍保留独立结果域，以兼容现有上传链路中 `packageScan` 和 `t_skill_security_scan` 的语义。
+1. MCP Adapter 校验输入 Schema。
+2. Upload Resolver 解析上传句柄，取得原始文件名和字节流。
+3. 调用现有包扫描器。
+4. 包扫描失败时返回 <code>packageScan</code>；不调用外部安全扫描，不执行 Skill、版本和文件入库。
+5. 包扫描通过后，基于同一包结果生成建设规范检查结果。
+6. 调用现有外部安全扫描器。
+7. 将安全扫描结果保存到 <code>t_skill_security_scan</code>。
+8. 外部安全扫描通过时，现有平台继续 Skill、版本、文件入库和存储。
+9. 外部安全扫描失败时，现有平台返回安全扫描结果且不入库。
+10. Report Builder 组装 MCP 结构化结果，不重新裁决原有扫描结果。
 
-## 9. 包扫描规则
+## 6. 实施约束（IMPLEMENTATION_ONLY）
 
-### 9.1 ZIP 与资源限制
+以下约束只保护 MCP 本身，不改变规则判定：
 
-- 文件非空、扩展名为 `.zip`、文件头符合 ZIP 魔数且可以正常读取。
-- 最大 ZIP 大小由 `skill.upload.max-zip-bytes` 提供。
-- 业务文件最多 1000 个。
-- 单个解压后文件最多 10MB。
-- 解压后总大小最多 200MB。
-- 附件质量上限：除 `SKILL.md` 外合计最多 50MB。
-- 同时校验 ZIP entry 声明大小和实际读取大小。
-- 默认拒绝加密 ZIP、符号链接、硬链接、设备文件和嵌套压缩包。
-- 所有限制均在流式读取过程中执行，禁止先无界解压再统计。
+- 通过 <code>upload://</code> 句柄读取文件，不向 MCP 调用者开放任意文件系统路径。
+- 扫描进程不执行包内脚本、命令或安装动作。
+- <code>scanId</code>、目标 SHA-256、Module 版本、两个扫描器版本和来源包标识进入报告。
+- 密钥、密码和 Token 证据在 MCP 结果与日志中脱敏；规则命中状态保持不变。
+- 稳定规则 ID 只用于追溯到来源检测项，不改变来源名称和严重度。
+- Tool 调用参数、句柄解析失败或内部异常进入 <code>toolErrors</code>，不伪装成“未发现风险”。
+- Tool 错误时 <code>uploadDecision.eligible</code> 为 <code>null</code>；具体上传异常处置继续由现有平台负责。
+- MCP 不创建新的安全结果表；安全扫描结果继续保存到 <code>t_skill_security_scan</code>。
 
-### 9.2 路径安全
+## 7. 测试设计
 
-- 去掉开头 `./` 和目录末尾 `/`，统一使用 `/`。
-- 禁止空路径、反斜杠、冒号、绝对路径、连续分隔符和 `..`。
-- 检测标准化后重复路径、文件/目录冲突。
-- 企业增强规则增加 Unicode 规范化冲突和大小写折叠冲突，防止跨平台覆盖。
-- `.git`、`.svn`、`.hg`、`.ssh`、`node_modules`、`.idea`、`.vscode`、`.env` 等高风险路径直接拒绝。
+### 7.1 Interface 契约
 
-### 9.3 包根与系统文件
+- 输入只接受 <code>uploadUri</code> 和可选 <code>requestId</code>。
+- 目录、单 Markdown、RAR、本地路径和 HTTP URL 均不属于 Interface。
+- 输出 Schema、状态枚举和字段可稳定解析。
+- 调用者不能关闭检测器、修改阈值或覆盖严重度。
 
-- 支持根目录 `SKILL.md`。
-- 支持唯一顶层目录中的 `SKILL.md`，后续剥离该前缀。
-- 包根外普通文件忽略；包根外高风险路径仍阻断。
-- `__MACOSX/**`、`.DS_Store`、`._*` 完全忽略，不计数、不持久化、不安全扫描。
+### 7.2 包扫描等价性
 
-### 9.4 文件类型
+- 为 SRC-PKG-MD 的 1—22 节建立测试映射。
+- 使用相同 ZIP 同时调用现有包扫描器和 MCP，<code>packageScan</code> 结果必须等价。
+- 覆盖两种合法包根、缺失 <code>SKILL.md</code>、包根外路径、路径穿越、重复路径、大小限制、白名单、危险路径、文本/图片类型、危险内容和 front matter。
+- 验证 macOS 垃圾文件不参与根判断、统计、重复检查、持久化和安全扫描。
+- 验证显式目录、隐式目录、文件类型、Content-Type 和 searchable 映射。
 
-- 扩展名必须存在且命中平台白名单。
-- 文本类文件样本不能表现为二进制。
-- PNG、JPEG、GIF 校验魔数；SVG 需要 XML 安全解析，不能只按扩展名放行。
-- 内容类型识别结果不得用于执行文件，只用于分类和报告。
+### 7.3 建设规范检查
 
-### 9.5 基础危险内容
+- ZIP 名与 <code>name</code> 原值一致和不一致。
+- 附件总大小在 50MB 边界内外。
+- 复用包扫描的 <code>SKILL.md</code>、<code>name</code> 和 <code>description</code> 结果。
+- 所有缺少确定性方法的规范固定返回 <code>NOT_EVALUATED</code>，不得由测试引入隐式启发式判断。
 
-保留上传包扫描中的快速拦截：`rm -rf /`、下载管道执行、`nc -e`、`bash -i`、`/etc/passwd`、私钥头、AWS Secret 和 AKIA 格式。与安全扫描命中相同内容时，按 `fingerprint` 合并，不重复计数。
+### 7.4 安全扫描等价性
 
-## 10. SKILL.md 与质量规则
+- 15 类检测器的 98 个检测项各有命中样例，并覆盖原文跳过规则。
+- 相同包在现有外部安全扫描器和 MCP 中的 <code>passed</code>、finding 和来源严重度必须等价。
+- <code>df.info()</code>、<code>user: zh</code> 和 <code>writer.encrypt(...)</code> 测试记录现有扫描器实际行为，不把期望的误报修复或漏报补偿写入当前规则。
+- 原始密码、密钥和 Token 不出现在 MCP 响应或日志中。
 
-### 10.1 确定性阻断规则
+### 7.5 流程
 
-- 文件必须使用 UTF-8。
-- 必须以 `---` 开始，并存在闭合 front matter。
-- YAML 必须解析为 Map；禁止重复关键字段和不安全 YAML 类型。
-- `name`、`description` 必填。
-- `version` 不允许填写。
-- `name` 必须满足平台配置正则。
-- ZIP 文件名必须与 `name` 对应，比较规则由策略定义。
-- front matter 与 Markdown 正文均不得为空。
-- 正文引用的本地脚本、资源和文档必须存在于包根内。
+- 包扫描失败后不调用外部安全扫描。
+- 包扫描通过后保存外部安全扫描结果。
+- 两层扫描的通过/失败与现有上传入库流程一致。
+- Tool 错误不产生虚假的 <code>eligible=true</code>。
 
-### 10.2 质量告警规则
+## 8. 验收标准
 
-- `description` 应用 1–2 句话自包含地说明能力、输入/输出、适用场景和触发条件。
-- 过于宽泛的描述，如“处理 PDF”“查询数据库”，标记 `QUALITY_DESCRIPTION_AMBIGUOUS` 并进入复核。
-- 正文应包含可执行步骤、异常处理和结果要求，避免相互矛盾的指令。
-- 长资料、脚本和资源应与 `SKILL.md` 分离，并通过相对路径引用。
-- 依赖必须在平台沙箱允许范围内；临时安装命令进入供应链检测。
-- 附件中的违法、不良内容和知识产权风险属于内容合规范围；在没有专用检测器时必须显示为覆盖缺口，不能宣称已通过。
+- 外部 Interface 只有 <code>scan(uploadUri, requestId?)</code>。
+- 输入范围只有 Skill ZIP 上传包。
+- SRC-PKG-MD 的 22 节均有最终规则映射。
+- SRC-SEC 的 15 类检测器、98 个检测项、严重度和跳过规则均有最终映射。
+- SRC-SPEC 的结构、描述、正文、代码、依赖、附件和内容要求均被映射；不能自动判断的项目明确为 <code>NOT_EVALUATED</code>。
+- 包扫描和外部安全扫描的结果与现有实现等价。
+- 包扫描失败后的短路行为和 <code>t_skill_security_scan</code> 保存顺序不变。
+- 没有目录、单 Markdown、RAR、全文扩展、AST、语义补漏、额外路径拒绝或新严重度映射。
+- 恶意文件检测和大模型扫描明确保持未启用。
+- 所有 <code>SOURCE_ISSUE</code> 与规则行为分离。
+- 报告中的密码、密钥和 Token 证据完成脱敏。
+- 文档不包含阶段规划、候选增强、待确认方案或未来路线图。
 
-### 10.3 密码使用规范
+## 附录 A：包扫描规则
 
-- 禁止在 Skill、示例代码和命令中写入真实或示例密码，如 `mypassword`、`12345678`。
-- Python 交互场景使用 `getpass()`；自动化场景使用企业密钥管理或受控环境变量。
-- 命令行工具优先通过标准输入或受保护的密码文件读取，避免把密码放入进程参数。
-- 不要求用户在聊天消息中发送密码，不打印、不记录密码。
+### A.1 逐节规则映射
 
-## 11. 安全检测规则
+| 规则 ID | 来源节 | 最终行为 |
+|---|---:|---|
+| PKG-01 | 1 | 包扫描只负责 ZIP 结构、路径、大小、类型、基础内容和 <code>SKILL.md</code> 元数据。 |
+| PKG-02 | 2 | 文件非空；原始文件名以 <code>.zip</code> 结尾且大小写不敏感；大小不超过 <code>skill.upload.max-zip-bytes</code>；文件头含 <code>PK</code>；ZIP 可正常打开。 |
+| PKG-03 | 3 | 按原文执行路径标准化和非法路径判断；非法时返回 <code>ILLEGAL_PATH</code>。 |
+| PKG-04 | 4 | 完全忽略指定 macOS 垃圾文件，不参与判断、统计、重复检查、入库和安全扫描。 |
+| PKG-05 | 5 | 只接受根目录 <code>SKILL.md</code> 或唯一顶层目录下的 <code>SKILL.md</code>。 |
+| PKG-06 | 6 | 唯一包根外的高风险路径导致失败；其他包根外路径忽略。 |
+| PKG-07 | 7 | 在剥离包根后的标准化路径上检查重复文件、重复目录和文件/目录冲突，返回 <code>DUPLICATE_PATH</code>。 |
+| PKG-08 | 8 | 最多 1000 个业务文件；单文件解压后最多 10MB；解压后总计最多 200MB；同时检查声明大小和实际读取大小。 |
+| PKG-09 | 9 | 文件必须有扩展名并命中平台配置白名单；否则返回 <code>EXTENSION_NOT_ALLOWED</code>。 |
+| PKG-10 | 10 | 命中原文高风险路径列表时返回 <code>DANGEROUS_PATH</code>。 |
+| PKG-11 | 11 | 每个文件最多读取前 64KB 样本；文本似二进制或图片魔数不匹配时返回 <code>CONTENT_TYPE_MISMATCH</code>。 |
+| PKG-12 | 12 | 只在文本文件前 64KB 样本中匹配原文危险内容；命中时返回 <code>DANGEROUS_CONTENT</code>。 |
+| PKG-13 | 13 | <code>SKILL.md</code> 必须是 UTF-8，包含可解析为 Map 的 YAML front matter，并校验规定字段。 |
+| PKG-14 | 14 | <code>name</code> 使用项目配置正则；非空 <code>version</code> 导致失败。 |
+| PKG-15 | 15 | 返回规定的包扫描产物字段。 |
+| PKG-16 | 16 | 生成文件和目录节点；保留显式目录并补齐隐式父目录。 |
+| PKG-17 | 17 | 按规定扩展名映射 <code>fileType</code>。 |
+| PKG-18 | 18 | 按规定扩展名映射 <code>contentType</code>。 |
+| PKG-19 | 19 | 按规定扩展名设置 <code>searchable</code>。 |
+| PKG-20 | 20 | 保持包扫描在上传流程中的原有顺序和短路行为。 |
+| PKG-21 | 21 | 示例仅验证前述规则，不产生额外检测条件。 |
+| PKG-22 | 22 | 保持包扫描与外部安全扫描分层、macOS 垃圾忽略、平台生成版本号和文本类型含义。 |
 
-首版必须覆盖 0720 文档中的 15 类检测器：
+ZIP 无法打开时保留原错误信息 <code>zip 文件无法正常打开</code>。无法识别合法包根时保留原错误信息 <code>SKILL.md 必须位于 ZIP 根目录，或位于唯一顶层目录下</code>。
 
-| 组 | 检测器 |
-|---|---|
-| 代码内容 | Secrets、Injection、Base64、Obfuscation、HiddenChar、Entropy |
-| 危险行为 | DownloadExec、CredentialTheft、Exfiltration、Persistence、PrivilegeEscalation、SocialEngineering、Network |
-| 供应链 | SupplyChain、IOC |
+### A.2 路径和包根
 
-### 11.1 扫描策略
+路径标准化按以下顺序执行：
 
-- 对文本业务文件全文分块扫描，不只检查前 64KB。
-- 检测 Markdown fenced code block 的语言，并在支持时使用 AST/语法分析。
-- 规则必须有稳定 `ruleId`、严重度、适用文件类型、版本和测试样例。
-- CRITICAL/HIGH 证据必须脱敏；原始秘密不得写入日志、数据库或 MCP 结果。
-- 组合行为规则采用多遍扫描，例如“压缩 + 上传”“敏感目录 + 上传”。
-- IOC 先做语法提取，再查内网情报快照；没有真实 URL/IP 时不调用情报 Adapter。
+1. 去掉开头的 <code>./</code>。
+2. 去掉目录路径末尾的 <code>/</code>。
+3. 使用 <code>/</code> 作为统一路径分隔符。
+4. 拒绝空文件路径。
+5. 拒绝反斜杠 <code>\</code>。
+6. 拒绝冒号 <code>:</code>。
+7. 拒绝以 <code>/</code> 开头的绝对路径。
+8. 拒绝连续分隔符和空路径片段。
+9. 拒绝值为 <code>..</code> 的路径片段。
+10. 拒绝归一化后以 <code>..</code> 开头的路径。
 
-### 11.2 上下文误报控制
+忽略项保持为：
 
-已知回归用例必须进入测试集：
+- <code>__MACOSX/**</code>
+- <code>.DS_Store</code> 和 <code>*/.DS_Store</code>
+- <code>._*</code> 和 <code>*/._*</code>
 
-| 内容 | 旧规则问题 | 新判定 |
+高风险路径片段保持为：
+
+- <code>.git</code>、<code>.svn</code>、<code>.hg</code>、<code>.ssh</code>
+- <code>__macosx</code>、<code>node_modules</code>、<code>.idea</code>、<code>.vscode</code>
+- <code>.env</code> 和 <code>*/.env</code>
+
+本设计不增加大小写折叠或 Unicode 正规化规则。
+
+### A.3 文件数量、大小和白名单
+
+- 业务文件数量上限：1000，错误码 <code>FILE_COUNT_EXCEEDED</code>。
+- 单个解压后文件上限：10MB，即 10485760 字节，错误码 <code>SINGLE_FILE_SIZE_EXCEEDED</code>。
+- 解压后总大小上限：200MB，即 209715200 字节，错误码 <code>TOTAL_UNCOMPRESSED_SIZE_EXCEEDED</code>。
+- ZIP 原文件大小上限由 <code>skill.upload.max-zip-bytes</code> 读取。
+- 扩展名白名单从平台配置读取；文档未列出的值不得自行补入。
+- <code>properties</code> 只有在平台配置中存在时才允许，不能因代码常量存在而放行。
+
+### A.4 内容类型
+
+文本类扩展名：
+
+~~~text
+md, txt, json, yml, yaml, js, ts, py, java, xml, html, css, sh
+~~~
+
+图片校验：
+
+- <code>png</code> 检查 PNG 文件头。
+- <code>jpg/jpeg</code> 检查 JPEG 文件头。
+- <code>gif</code> 检查 GIF87a/GIF89a 文件头。
+- <code>svg</code> 不做魔数校验，默认通过。
+
+### A.5 基础危险内容
+
+只在文本文件前 64KB 样本中匹配：
+
+- <code>rm -rf /</code>
+- <code>curl ... | sh</code>、<code>curl ... | bash</code>
+- <code>wget ... | sh</code>、<code>wget ... | bash</code>
+- <code>nc -e</code>
+- <code>bash -i</code>
+- <code>/etc/passwd</code>
+- <code>BEGIN RSA PRIVATE KEY</code>
+- <code>BEGIN DSA PRIVATE KEY</code>
+- <code>BEGIN EC PRIVATE KEY</code>
+- <code>BEGIN OPENSSH PRIVATE KEY</code>
+- <code>AWS_SECRET_ACCESS_KEY</code>
+- <code>AKIA[0-9A-Z]{16}</code>
+
+### A.6 SKILL.md 元数据
+
+- 文件按 UTF-8 读取。
+- 文件以 <code>---</code> 开头并存在闭合的 <code>---</code>。
+- front matter 解析结果为 Map。
+- <code>name</code> 必填。
+- <code>description</code> 必填。
+- <code>title</code> 可选；为空时使用 <code>name</code>。
+- <code>version</code> 不允许填写；非空时失败。
+- <code>tags</code> 可选；为空时使用空数组。
+- <code>name</code> 使用项目配置正则。
+
+对应错误码：
+
+- <code>SKILL_MD_FRONTMATTER_REQUIRED</code>
+- <code>SKILL_MD_FRONTMATTER_INVALID</code>
+- <code>SKILL_MD_NAME_REQUIRED</code>
+- <code>SKILL_MD_DESCRIPTION_REQUIRED</code>
+- <code>SKILL_MD_VERSION_NOT_ALLOWED</code>
+
+### A.7 扫描产物和文件节点
+
+包扫描结果完整保留：
+
+- <code>passed</code>
+- <code>fileCount</code>
+- <code>textType</code>
+- <code>totalSizeBytes</code>
+- <code>rootDir</code>
+- <code>metadata</code>
+- <code>entries</code>
+- <code>errors</code>
+- <code>warnings</code>
+- <code>details</code>
+
+<code>PURE_TEXT</code> 表示包内只有一个业务文件；<code>COMPOSITE_TEXT</code> 表示包内有多个业务文件。
+
+每个 entry 保留：
+
+- <code>rawPath</code>、<code>normalizedPath</code>
+- <code>nodeType</code>、<code>nodeName</code>
+- <code>parentPath</code>、<code>pathDepth</code>
+- <code>sizeBytes</code>、<code>sha256</code>
+- <code>contentType</code>、<code>fileType</code>、<code>searchable</code>
+
+显式 ZIP 目录进入结果；文件路径中的父目录补为隐式目录。
+
+### A.8 文件分类映射
+
+| 扩展名 | fileType | contentType | searchable |
+|---|---|---|---|
+| md | MARKDOWN | text/markdown | true |
+| txt | TEXT | text/plain | true |
+| json | TEXT | application/json | true |
+| yml、yaml | TEXT | application/x-yaml | true |
+| xml | TEXT | text/xml | true |
+| html | TEXT | text/html | true |
+| css | TEXT | text/css | true |
+| js、ts、py、java、sh | SCRIPT | application/octet-stream | true |
+| png | IMAGE | image/png | false |
+| jpg、jpeg | IMAGE | image/jpeg | false |
+| gif | IMAGE | image/gif | false |
+| svg | IMAGE | application/octet-stream | false |
+| pdf | BINARY | application/pdf | false |
+| 其他白名单扩展名 | OTHER | application/octet-stream | false |
+
+## 附录 B：Skill 建设规范检查
+
+| 规则 ID | 来源要求 | 最终检查方式 |
 |---|---|---|
-| `df.info()` | 被当作 `.info` 可疑域名 | Python 成员调用，非域名。 |
-| <code>user: &#96;zh&#96;</code> | 被当作硬编码用户名 | Markdown 自然语言中的语言代码。 |
-| `--password=mypassword` | 命中硬编码密码 | 确认风险，即使是示例也应修复。 |
-| `writer.encrypt("userpassword", "ownerpassword")` | 窄版 `password=` 规则可能漏报 | 通过调用语义识别为硬编码密码。 |
+| SPEC-ZIP-NAME | ZIP 包名字与 Skill 名字完全一致。 | 对 ZIP 文件名去掉 <code>.zip</code> 后与 front matter 的 <code>name</code> 做原值精确比较；不增加大小写或 Unicode 正规化。 |
+| SPEC-SKILL-MD | ZIP 至少包含一个有效 <code>SKILL.md</code>，含 <code>name</code> 和 <code>description</code>。 | 复用包扫描结果。 |
+| SPEC-NAME-STYLE | <code>name</code> 通常使用小写字母和连字符。 | 保留为来源建议；不替代平台名称正则，不单独阻断。 |
+| SPEC-DESCRIPTION-QUALITY | <code>description</code> 用 1—2 句话自包含地说明功能、场景和触发条件，避免歧义。 | <code>NOT_EVALUATED</code>；原文未给出确定性算法，且大模型扫描未启用。 |
+| SPEC-BODY | 正文按任务灵活组织，不强制模板；逻辑或步骤应清晰、闭环并覆盖正常与异常场景。 | <code>NOT_EVALUATED</code>；不增加正文非空、章节或关键词规则。 |
+| SPEC-RESOURCE-SEPARATION | 长文档、脚本和资源与正文分离。 | <code>NOT_EVALUATED</code>；不增加目录或引用规则。 |
+| SPEC-LANGUAGE | 表述简洁，无模糊词汇。 | <code>NOT_EVALUATED</code>。 |
+| SPEC-CODE-SAFETY | 不得含恶意或攻击性内容，包括 SQL 注入、XSS；不得用未验证输入构造 SQL 或 HTML。 | 安全扫描结果原样报告；来源未定义的 SQLi、XSS 和数据流分析部分标记 <code>NOT_EVALUATED</code>。 |
+| SPEC-DEPENDENCY | 不应依赖沙箱默认镜像范围外的安装包。 | 未取得默认镜像依赖清单时为 <code>NOT_EVALUATED</code>，不得自行建立清单。 |
+| SPEC-ATTACHMENT-SIZE | 除 <code>SKILL.md</code> 外的附件总大小不超过 50MB。 | 对标准化业务文件求和并排除 <code>SKILL.md</code>；结果为 <code>PASS</code> 或 <code>FAIL</code>。该规范结果不改写包扫描的 200MB 上限。 |
+| SPEC-CONTENT | 不得包含违法、违规、色情、暴力等不良信息。 | <code>NOT_EVALUATED</code>；来源未提供检测器。 |
+| SPEC-IP | 避免未经授权的图片、音乐等知识产权内容。 | <code>NOT_EVALUATED</code>；来源未提供检测器。 |
 
-代码围栏中的内容不能因为“只是文档示例”而自动降级，因为 Skill 可能指导智能体实际执行该命令。上下文分析只用于提高置信度，不用于静默忽略高风险行为。
+规范检查状态固定为：
 
-### 11.3 高熵内容
+- <code>PASS</code>：确定性要求满足。
+- <code>FAIL</code>：确定性要求不满足。
+- <code>NOT_EVALUATED</code>：来源有要求，但没有足够规则或已启用能力自动判断。
 
-- 普通文本阈值：Shannon 熵大于 5.5、行长至少 100 字符。
-- 中文/Markdown 阈值：大于 6.5。
-- 跳过图片 data URI、锁文件完整性字段和明确哈希字段。
-- 高熵只产生需要复核的线索；若同时匹配密钥格式或可疑解码行为，再提升严重度。
+不使用综合分数，也不把 <code>NOT_EVALUATED</code> 转换成人工复核或上传阻断。
 
-### 11.4 当前覆盖缺口
+## 附录 C：外部安全扫描规则
 
-下列能力在来源文档中明确未启用或没有实现依据：
+### C.1 通用行为
 
-- 恶意文件、Office 宏、二进制和 YARA/杀毒扫描；
-- 大模型语义扫描和提示词注入检测；
-- 完整 SCA/SBOM、依赖 CVE、签名与来源证明；
-- 违法、不良内容和知识产权自动判定；
-- 动态沙箱执行。
+- 复用现有外部安全扫描器，不在 MCP 中重写正则、匹配边界、大小写规则或文件范围。
+- finding 保留 SRC-SEC 中的严重度；<code>HIGH/CRITICAL</code> 和 <code>MEDIUM/HIGH</code> 等原文复合值不得由 MCP 自行归一化。
+- 所有检测器默认跳过 <code>.git</code>、<code>__pycache__</code>、<code>.venv</code> 和 <code>node_modules</code> 目录。
+- 恶意文件检测和大模型扫描保持未启用。
+- 安全扫描器的 <code>passed</code> 原样返回，MCP 不从 finding 严重度重新推导。
 
-报告必须逐项返回 `ENABLED`、`DISABLED`、`DEGRADED` 或 `NOT_APPLICABLE`，禁止用整体 `PASS` 掩盖覆盖缺口。
+### C.2 SecretsDetector
 
-## 12. 企业策略裁决
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-SECRET-01 | AWS 访问密钥 | <code>AKIA</code> 开头的 20 位密钥 | HIGH |
+| SEC-SECRET-02 | AWS 凭证 | <code>aws_access_key_id</code>、<code>aws_secret_access_key</code> 配置 | HIGH |
+| SEC-SECRET-03 | 私钥 | <code>-----BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----</code> | HIGH |
+| SEC-SECRET-04 | OpenAI API 密钥 | <code>sk-</code> 开头的密钥 | HIGH |
+| SEC-SECRET-05 | GitHub Token | <code>ghp_</code>、<code>gho_</code>、<code>github_pat_</code> 开头 | HIGH |
+| SEC-SECRET-06 | Slack Token | <code>xox[baprs]-</code> 开头 | HIGH |
+| SEC-SECRET-07 | API 密钥/密钥 | <code>api_key</code>、<code>secret_key</code>、<code>access_token</code>、<code>auth_token</code> 等字段后跟 20 位以上字符串 | HIGH |
+| SEC-SECRET-08 | 硬编码密码 | <code>password=</code> 后跟 8 位以上字符串 | HIGH |
+| SEC-SECRET-09 | 硬编码用户名 | <code>username</code>、<code>user</code>、<code>login</code> 等字段后跟 4 位以上字符串 | MEDIUM |
 
-默认 `enterprise-intranet-v1`：
+### C.3 InjectionDetector
 
-| 条件 | 结论 |
-|---|---|
-| ZIP、路径、大小、类型、根目录或必需元数据错误 | `REJECT` |
-| 确认的 CRITICAL/HIGH | `REJECT` |
-| 确认的 MEDIUM | `REVIEW`；高安全环境可配置为 `REJECT` |
-| LOW/INFO | `PASS_WITH_WARNINGS` |
-| `LIKELY_FALSE_POSITIVE` | 不静默删除，保留发现并按策略进入复核或警告 |
-| IOC 命中内网恶意库 | CRITICAL，`REJECT` |
-| 需要 IOC 查询但情报库过期或不可用 | `REVIEW`；生产高安全环境失败关闭 |
-| 扫描超时、崩溃、规则加载失败 | `ERROR`，生产上传失败关闭 |
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-INJECT-01 | eval 动态执行 | <code>eval()</code> 参数非字面量字符串 | HIGH |
+| SEC-INJECT-02 | exec 动态执行 | <code>exec()</code> 参数非字面量字符串 | HIGH |
+| SEC-INJECT-03 | 动态导入 | 使用 <code>__import__()</code> | HIGH |
+| SEC-INJECT-04 | compile 编译 | 使用 <code>compile()</code> | HIGH |
+| SEC-INJECT-05 | os.system | 使用 <code>os.system()</code> | HIGH |
+| SEC-INJECT-06 | os.popen | 使用 <code>os.popen()</code> | HIGH |
+| SEC-INJECT-07 | subprocess shell | subprocess 调用设置 <code>shell=True</code> | HIGH |
+| SEC-INJECT-08 | execfile | 使用 Python 2 <code>execfile()</code> | HIGH |
 
-例外必须由独立审批流程生成带到期时间的 `exceptionRef`。MCP 调用者不能在参数中直接传入“忽略规则”。
+### C.4 Base64Detector
 
-## 13. 安全与内网部署要求
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-B64-01 | 可疑 Base64 解码 | 长度至少 50；解码后含 <code>exec</code>、<code>eval</code>、<code>import</code>、<code>subprocess</code>、<code>os.system</code>、<code>curl</code>、<code>wget</code>、<code>bash</code>、<code>socket</code> 等关键词 | HIGH |
+| SEC-B64-02 | 普通 Base64 | 长度至少 50；解码后无明显恶意 | MEDIUM |
+| SEC-B64-03 | 二进制 Base64 | 解码为非 UTF-8 内容 | MEDIUM |
 
-### 13.1 文件系统和进程
+跳过：<code>data:image/</code>、<code>package-lock.json</code>、<code>yarn.lock</code>、<code>pnpm-lock.yaml</code>，以及 <code>integrity</code>、<code>sha256</code>、<code>sha512</code>、<code>sha384</code> 字段。
 
-- 生产仅解析 `upload://` 句柄；本地路径 Adapter 默认关闭。
-- 扫描 Worker 使用非特权账户、只读源文件和独立临时目录。
-- 禁止调用 shell 执行包内内容；压缩解析库不得自动运行钩子。
-- 临时目录权限最小化，扫描完成后可靠清理。
-- 设置 CPU、内存、文件数、解压比例、嵌套深度和总时间限制。
-- 拒绝路径穿越、绝对路径、符号链接、硬链接、设备文件和 Unicode/case 冲突。
+### C.5 ObfuscationDetector
 
-### 13.2 网络和情报
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-OBF-01 | eval/exec | 参数非字面量的 <code>eval()</code> 或 <code>exec()</code> | HIGH |
+| SEC-OBF-02 | Hex 序列 | 连续 5 个以上 <code>\xXX</code> 转义字符 | HIGH |
+| SEC-OBF-03 | chr 拼接 | 3 个以上 <code>chr()</code> 函数拼接 | HIGH |
+| SEC-OBF-04 | Python 反转 | 使用 <code>[::-1]</code> | MEDIUM |
+| SEC-OBF-05 | JS 反转 | <code>.split().reverse().join()</code> 模式 | MEDIUM |
+| SEC-OBF-06 | fromCharCode | 多参数 <code>String.fromCharCode()</code> | HIGH |
+| SEC-OBF-07 | atob | 对长字符串调用 <code>atob()</code> | MEDIUM |
 
-- 默认无公网出口。
-- 威胁情报通过企业内网镜像更新，规则包和情报快照需要签名验证。
-- 报告记录情报快照 ID、生成时间和过期状态。
-- 网络异常不能被解释为“未发现恶意”。
+### C.6 HiddenCharDetector
 
-### 13.3 数据保护与审计
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-HIDDEN-01 | 零宽字符 | U+200B、U+200C、U+200D、U+2060、U+FEFF、U+2063、U+00AD | LOW |
+| SEC-HIDDEN-02 | Unicode 转义零宽字符 | 源码中的 <code>\u200b</code>、<code>\u200c</code>、<code>\u200d</code>、<code>\u2060</code>、<code>\ufeff</code>、<code>\u2063</code>、<code>\u00ad</code> | LOW |
+| SEC-HIDDEN-03 | 双向控制字符 | U+202A—U+202E、U+2066—U+2069、U+200E、U+200F | LOW |
 
-- 日志和指标不包含文件正文、密码、Token 或完整本地路径。
-- 证据片段限制长度并执行密钥脱敏。
-- 审计记录至少包含请求主体、目标哈希、版本信息、结论、规则命中和例外引用。
-- 扫描报告需要保留策略规定的期限，并支持按哈希追溯。
-- 规则和策略变更采用代码评审、签名发布、灰度验证和可回滚版本。
+### C.7 EntropyDetector
 
-## 14. 平台集成
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-ENTROPY-01 | 高熵文本行 | 行长度至少 100；Shannon 熵大于 5.5，中文或 Markdown 大于 6.5 | MEDIUM |
 
-建议上传链路：
+跳过：短于 100 字符的行、<code>data:</code> 前缀、以 <code>//</code>、<code>#</code>、<code>/*</code>、<code>*</code> 表示的注释行，以及 <code>package-lock.json</code>、<code>yarn.lock</code>、<code>pnpm-lock.yaml</code>、<code>Cargo.lock</code>、<code>Gemfile.lock</code>、<code>poetry.lock</code> 等锁定文件。
 
-1. 接收 multipart ZIP 并写入隔离临时区。
-2. 创建不可伪造的 `upload://<id>`。
-3. 调用 `scan_skill_quality`，范围为 `UPLOAD_PACKAGE`。
-4. `REJECT`、`REVIEW` 或 `ERROR`：不入库，返回结构化发现。
-5. `PASS` 或策略允许的 `PASS_WITH_WARNINGS`：写入 Skill、版本和文件表。
-6. 将统一报告保存至 `t_skill_security_scan`，或新增 `t_skill_quality_scan` 并保留旧表兼容映射。
+### C.8 DownloadExecDetector
 
-缓存键必须至少包含：
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-DOWNLOAD-01 | curl 管道到 shell | <code>curl ... | bash</code> 或 <code>curl ... | sh</code> | CRITICAL |
+| SEC-DOWNLOAD-02 | wget 管道到 shell | <code>wget ... | bash</code> 或 <code>wget ... | sh</code> | CRITICAL |
+| SEC-DOWNLOAD-03 | curl 下载后执行 | <code>curl -o ... && bash</code> | CRITICAL |
+| SEC-DOWNLOAD-04 | wget 下载后执行 | <code>wget -O ... && bash</code> | CRITICAL |
+| SEC-DOWNLOAD-05 | curl 管道到 Python | <code>curl ... | python</code> | CRITICAL |
+| SEC-DOWNLOAD-06 | wget 管道到 Python | <code>wget ... | python</code> | CRITICAL |
+| SEC-DOWNLOAD-07 | fetch 配合 eval | <code>fetch()</code> 返回值配合 <code>eval()</code> | CRITICAL |
+| SEC-DOWNLOAD-08 | urllib 配合 exec | <code>urlopen()</code> 返回值配合 <code>exec()</code> | CRITICAL |
+| SEC-DOWNLOAD-09 | requests 配合 exec | <code>requests.get()</code> 返回值配合 <code>exec()</code> | CRITICAL |
 
-```text
-targetSha256
-+ engineVersion
-+ rulesetVersion
-+ policyVersion
-+ threatIntelSnapshot
-+ malwareSignatureVersion
-```
+### C.9 CredentialTheftDetector
 
-任一版本变化都使旧缓存失效。
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-CRED-01 | macOS 密码对话框 | <code>osascript display dialog password</code> | CRITICAL |
+| SEC-CRED-02 | macOS 隐藏输入 | <code>osascript display dialog hidden answer</code> | CRITICAL |
+| SEC-CRED-03 | Keychain 密码提取 | <code>security find-generic-password</code> 或 <code>security find-internet-password</code> | CRITICAL |
+| SEC-CRED-04 | Keychain 导出 | <code>security dump-keychain</code> | CRITICAL |
+| SEC-CRED-05 | SSH 私钥读取 | 读取 <code>.ssh/id_rsa</code>、<code>.ssh/id_ed25519</code>、<code>.ssh/id_ecdsa</code> | CRITICAL |
+| SEC-CRED-06 | SSH 私钥访问 | 访问 <code>.ssh/id_</code> 开头文件 | CRITICAL |
+| SEC-CRED-07 | 凭证文件读取 | 读取 <code>.env</code>、<code>.npmrc</code>、<code>.pypirc</code>、<code>.netrc</code> | CRITICAL |
+| SEC-CRED-08 | AWS 凭证文件 | 访问 <code>.aws/credentials</code> | CRITICAL |
+| SEC-CRED-09 | 浏览器凭证 | 访问 <code>Cookies.binarycookies</code>、<code>Login Data</code>、<code>cookies.sqlite</code> | CRITICAL |
 
-## 15. 错误模型
+### C.10 ExfiltrationDetector
 
-### 15.1 MCP 协议错误
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-EXFIL-01 | ZIP 加上传 | 同时出现 <code>zipfile</code>、<code>ZipFile</code> 或 <code>make_archive</code> 与 <code>requests.post/put</code>、<code>urllib.request.urlopen/Request</code>、<code>http.client</code>、<code>fetch()</code> 或 <code>.upload</code> | HIGH |
+| SEC-EXFIL-02 | 递归敏感枚举 | <code>glob.glob</code> 或 <code>glob.iglob</code> 枚举 <code>/home</code>、<code>~</code>、<code>**</code> | HIGH |
+| SEC-EXFIL-03 | 敏感目录加上传 | 同时访问 <code>.ssh</code>、<code>.aws</code>、<code>.gnupg</code>、<code>.kube</code>、<code>.config/gcloud</code>、<code>.npmrc</code>、<code>.pypirc</code> 与网络上传能力 | HIGH |
 
-仅用于调用本身不合法，例如缺少 `targetUri`、无权使用策略、目标句柄不存在。
+执行来源规定的两遍扫描：第一遍标记敏感目录访问和上传功能；第二遍检查组合模式。
 
-### 15.2 扫描结果错误
+### C.11 PersistenceDetector
 
-目标内容不合规应作为正常 `ScanReport` 返回，而不是 MCP 协议错误。例如：
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-PERSIST-01 | crontab 修改 | <code>crontab -e</code>、<code>crontab -l</code> 等操作 | HIGH |
+| SEC-PERSIST-02 | Cron 安装 | 写入 crontab 或 <code>/etc/cron.d/</code> | HIGH |
+| SEC-PERSIST-03 | LaunchAgents/Daemons | 引用 <code>LaunchAgents</code>、<code>LaunchDaemons</code>、<code>.plist</code> | HIGH |
+| SEC-PERSIST-04 | launchctl 加载 | <code>launchctl load</code> 或 <code>launchctl bootstrap</code> | HIGH |
+| SEC-PERSIST-05 | systemd 启用 | <code>systemctl enable</code> 或 <code>systemctl start</code> | HIGH |
+| SEC-PERSIST-06 | systemd 文件 | 创建 <code>/etc/systemd/system/*.service</code> | HIGH |
+| SEC-PERSIST-07 | Windows 启动项 | 访问 <code>HKEY_...\Run</code> 或 <code>CurrentVersion\Run</code> | HIGH |
+| SEC-PERSIST-08 | Shell 配置写入 | 写入 <code>.bashrc</code>、<code>.zshrc</code>、<code>.profile</code>、<code>.bash_profile</code> | HIGH |
 
-- `ILLEGAL_PATH`
-- `DUPLICATE_PATH`
-- `FILE_COUNT_EXCEEDED`
-- `SINGLE_FILE_SIZE_EXCEEDED`
-- `TOTAL_UNCOMPRESSED_SIZE_EXCEEDED`
-- `EXTENSION_NOT_ALLOWED`
-- `DANGEROUS_PATH`
-- `CONTENT_TYPE_MISMATCH`
-- `SKILL_MD_FRONTMATTER_REQUIRED`
-- `SKILL_MD_FRONTMATTER_INVALID`
-- `SKILL_MD_NAME_REQUIRED`
-- `SKILL_MD_DESCRIPTION_REQUIRED`
-- `SKILL_MD_VERSION_NOT_ALLOWED`
+### C.12 PrivilegeEscalationDetector
 
-扫描器内部失败返回 `verdict=ERROR`，并给出不含敏感实现细节的错误码和关联 ID。
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-PRIV-01 | sudo | 使用 <code>sudo</code> | HIGH |
+| SEC-PRIV-02 | chmod 777 | 设置世界可读写执行权限 | HIGH |
+| SEC-PRIV-03 | chmod +s | 设置 SUID/SGID 位 | HIGH |
+| SEC-PRIV-04 | chmod 含 SUID | 权限模式含 4xxx 或 2xxx | HIGH |
+| SEC-PRIV-05 | chown root | 将所有者改为 root | HIGH |
+| SEC-PRIV-06 | setuid/setgid | 使用 <code>os.setuid()</code> 或 <code>os.setgid()</code> | HIGH |
+| SEC-PRIV-07 | macOS 管理员组 | <code>dscl -append /Groups/admin</code> | HIGH |
 
-## 16. 性能与可用性
+该检测器跳过 <code>.md</code>、<code>.txt</code>、<code>.rst</code>、<code>.adoc</code>。
 
-- 所有阈值通过服务端策略配置，调用者不可提高上限。
-- 文本内容以固定大小分块扫描，保留跨块匹配所需重叠区。
-- 对规则做一次编译并使用不可变快照处理单次请求。
-- 以目标哈希和版本快照进行安全缓存。
-- MCP 层无业务状态；扫描状态和报告由后端存储管理。
-- 初始 SLO 应通过基准测试确定；建议分别统计小于 10MB、10–50MB 和 50–200MB 三档包的 P50/P95。
-- 超时必须返回 `ERROR`，不能返回部分 `PASS`。
+### C.13 SocialEngineeringDetector
 
-## 17. 可观测性
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-SOCIAL-01 | 双重扩展名 | 文件名含 <code>.docx.exe</code>、<code>.pdf.bat</code>、<code>.txt.cmd</code>、<code>.jpg.ps1</code> 等双重扩展名 | HIGH |
+| SEC-SOCIAL-02 | 诱饵文件名 | <code>wallet</code>、<code>airdrop</code>、<code>claim</code>、<code>reward</code>、<code>metamask</code>、<code>seed</code>、<code>recovery</code>、<code>invoice</code>、<code>urgent</code>、<code>important</code>、<code>password</code>、<code>credentials</code>、<code>secret</code>、<code>private-key</code> 等 | MEDIUM |
+| SEC-SOCIAL-03 | 钓鱼 URL | URL 含 <code>secure-login</code>、<code>verify</code>、<code>signin</code>、<code>login</code>、<code>account</code>、<code>recover</code>、<code>restore</code>、<code>confirm</code>、<code>update</code>、<code>validate</code>、<code>check</code>、<code>auth</code>、<code>reset-password</code>、<code>unlock</code> 等 | MEDIUM |
+| SEC-SOCIAL-04 | 假冒技术支持 | <code>Microsoft Support</code>、<code>Apple Support</code>、<code>Google Support</code>、<code>tech support</code>、<code>customer support</code>、<code>help desk</code>、<code>IT support</code>、<code>please call</code>、<code>call 1-xxx-xxx-xxxx</code>、<code>toll free</code>、<code>1-800</code>、<code>1-888</code>、<code>urgent</code>、<code>security alert/notice/update</code>、<code>your account has been suspended/locked</code>、<code>verify your identity</code>、<code>click here to</code> 等 | MEDIUM |
+| SEC-SOCIAL-05 | Crypto/Wallet 钓鱼 | <code>crypto-wallet</code>、<code>airdrop</code>、<code>free-token</code>、<code>security-update</code>、<code>urgent-fix</code>、<code>claim-reward</code>、<code>bonus-token</code>、<code>wallet-connect</code>、<code>seed-phrase</code>、<code>private-key-recovery</code>、<code>metamask-fix</code>、<code>connect wallet</code>、<code>claim your</code>、<code>free crypto/token/coin</code>、<code>win bitcoin/ethereum/crypto</code>、<code>limited time offer</code>、<code>exclusive airdrop</code> 等 | LOW |
 
-建议指标：
+### C.14 NetworkDetector
 
-- 扫描次数及各 Verdict 数量；
-- 按规则 ID 和严重度的命中次数；
-- 扫描时长、读取字节数、文件数和超时数；
-- `LIKELY_FALSE_POSITIVE` 与人工推翻比例；
-- 规则版本、情报快照和恶意软件特征库新鲜度；
-- 各扫描能力的 `DISABLED/DEGRADED` 次数；
-- 上传链路因 MCP 不可用而失败的次数。
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-NET-01 | Python socket | <code>socket.socket()</code>、<code>socket.connect()</code>、<code>socket.create_connection()</code> | MEDIUM |
+| SEC-NET-02 | Python http.client | <code>HTTPConnection</code>、<code>HTTPSConnection</code> | MEDIUM |
+| SEC-NET-03 | Python urllib | <code>urllib.request.urlopen()</code>、<code>urllib.request.Request()</code> | MEDIUM |
+| SEC-NET-04 | Python requests | <code>requests.get/post/put/delete/patch/head()</code> | MEDIUM |
+| SEC-NET-05 | JavaScript fetch | 使用 <code>fetch()</code> | MEDIUM |
+| SEC-NET-06 | XMLHttpRequest | 使用 <code>XMLHttpRequest</code> | MEDIUM |
+| SEC-NET-07 | axios | <code>axios.get/post/put/delete/patch()</code> | MEDIUM |
+| SEC-NET-08 | curl | 使用 <code>curl</code> | MEDIUM |
+| SEC-NET-09 | wget | 使用 <code>wget</code> | MEDIUM |
+| SEC-NET-10 | Node.js net | <code>net.createConnection()</code> 或 <code>require('net')</code> | MEDIUM |
 
-指标标签不得包含 Skill 正文、秘密值或高基数完整路径。
+### C.15 SupplyChainDetector
 
-## 18. 测试策略
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-SUPPLY-01 | 可疑 npm 安装 | 包名含 <code>malicious</code>、<code>evil</code>、<code>suspicious</code>、<code>exploit</code>、<code>payload</code>、<code>backdoor</code>、<code>hack</code>、<code>inject</code>、<code>trojan</code>、<code>virus</code>、<code>ransom</code>、<code>steal</code>、<code>leak</code>、<code>drop</code>、<code>crack</code>、<code>rootkit</code>、<code>botnet</code> 等 | CRITICAL |
+| SEC-SUPPLY-02 | 可疑 pip 安装 | <code>pip install/download</code> 的包名含 <code>malicious</code>、<code>evil</code>、<code>suspicious</code>、<code>exploit</code>、<code>payload</code>、<code>backdoor</code>、<code>hack</code>、<code>inject</code>、<code>trojan</code>、<code>ransom</code> 等 | CRITICAL |
+| SEC-SUPPLY-03 | 可疑 Docker 镜像 | <code>docker pull</code> 镜像名含 <code>malicious</code>、<code>evil</code>、<code>suspicious</code>、<code>exploit</code>、<code>payload</code>、<code>backdoor</code>、<code>hack</code>、<code>inject</code>、<code>trojan</code>、<code>virus</code>、<code>ransom</code> 等 | CRITICAL |
+| SEC-SUPPLY-04 | 非官方 Docker 镜像 | 从非官方域名或私有仓库拉取 | HIGH |
+| SEC-SUPPLY-05 | pip 额外索引 | 使用 <code>--extra-index-url</code> 或 <code>--index-url</code> | HIGH |
+| SEC-SUPPLY-06 | 可疑 gem 安装 | 包名含 <code>malicious</code>、<code>evil</code>、<code>suspicious</code>、<code>exploit</code>、<code>payload</code>、<code>backdoor</code> 等 | CRITICAL |
+| SEC-SUPPLY-07 | package.json 钩子 | <code>preinstall</code>、<code>install</code>、<code>postinstall</code>、<code>prepublish</code>、<code>prepare</code>、<code>prebuild</code>、<code>postbuild</code> | HIGH/CRITICAL |
+| SEC-SUPPLY-08 | 钩子可疑命令 | 钩子含 <code>curl</code>、<code>wget</code>、<code>bash</code>、<code>sh</code>、<code>python</code>、<code>node -e</code>、<code>eval</code>、<code>powershell</code>、<code>cmd</code>、<code>/tmp/</code>、<code>$env</code> 等 | CRITICAL |
+| SEC-SUPPLY-09 | setup.py cmdclass | <code>setup.py</code> 使用 <code>cmdclass</code> | HIGH/CRITICAL |
 
-模块的外部接口也是主要测试面。MCP Adapter 和 CLI Adapter 应调用同一个 `SkillQualityScanner`，并对相同输入产生同一报告。
+对 <code>package.json</code> 解析 JSON 后检查生命周期钩子和包名；对 <code>setup.py</code> 检查 <code>cmdclass</code> 中的可疑关键词。
 
-### 18.1 契约测试
+### C.16 IOCDetector
 
-- `inputSchema` 和 `outputSchema` 校验。
-- 所有 Verdict、错误码和 Finding 字段稳定性。
-- 文本摘要与 `structuredContent` 结论一致。
+可执行扩展名列表固定为：
 
-### 18.2 包扫描测试
+~~~text
+.exe, .msi, .bat, .cmd, .ps1, .sh, .bash, .zsh, .js, .vbs,
+.jar, .dll, .so, .dylib, .bin
+~~~
 
-- 根目录 `SKILL.md` 和唯一顶层目录两种合法结构。
-- 缺失 `SKILL.md`、多个顶层目录、包根外危险路径。
-- `../`、绝对路径、反斜杠、冒号、重复路径、文件/目录冲突。
-- Unicode 等价路径和大小写冲突。
-- ZIP 炸弹、虚假 entry 大小、超文件数、超单文件和超总大小。
-- 文本伪装二进制、错误图片魔数、加密 ZIP、符号链接。
-- macOS 垃圾文件不计数、不持久化、不扫描。
+恶意关键词列表固定为：
 
-### 18.3 元数据与质量测试
+~~~text
+malicious, evil, suspicious, phishing, malware, attack, exploit,
+payload, hacker, hack, backdoor, ransom, steal, inject, trojan,
+virus, botnet, exfil, dropship, darkweb, leak, dumped, crack
+~~~
 
-- 缺少或无法闭合 front matter。
-- YAML 非 Map、重复键、不安全类型。
-- 缺少 `name`/`description`、存在 `version`、非法名称。
-- ZIP 名称与 `name` 不一致。
-- 缺失本地引用、模糊 description、附件超过 50MB。
+| 规则 ID | 检测项 | 来源规则 | 严重度 |
+|---|---|---|---|
+| SEC-IOC-01 | 可疑 TLD 加可执行下载 | URL 域名含内置可疑 TLD 且指向列表中的可执行文件 | HIGH |
+| SEC-IOC-02 | 可疑 TLD | URL 域名含内置可疑 TLD | MEDIUM |
+| SEC-IOC-03 | 恶意关键词加可执行下载 | URL 域名含恶意关键词且指向列表中的可执行文件 | HIGH |
+| SEC-IOC-04 | 恶意关键词域名 | URL 域名含恶意关键词 | MEDIUM |
+| SEC-IOC-05 | 独立域名可疑 TLD | 非 URL 的独立域名含可疑 TLD | MEDIUM/HIGH |
+| SEC-IOC-06 | 已知恶意 IP | IP 匹配外部威胁情报数据库 | CRITICAL |
+| SEC-IOC-07 | 已知恶意 URL | URL 匹配外部威胁情报数据库 | CRITICAL |
 
-### 18.4 安全回归测试
+内置可疑 TLD 固定为：
 
-- 每个现有检测器至少包含一个命中和一个不命中样例。
-- `df.info()` 不作为域名。
-- <code>user: &#96;zh&#96;</code> 不作为用户名。
-- `--password=mypassword` 必须命中。
-- `writer.encrypt("userpassword", "ownerpassword")` 必须命中。
-- 高熵阈值、锁文件和 integrity 字段跳过规则。
-- 下载执行、凭据窃取、压缩上传、持久化和供应链组合行为。
-- IOC 语法提取与离线恶意库命中。
-- 报告和日志中不得出现原始秘密。
+~~~text
+.xyz, .top, .club, .work, .online, .site, .biz, .info, .ru, .su,
+.to, .cc, .tk, .ml, .ga, .cf, .gq, .pw, .ws, .onion, .zip, .mov
+~~~
 
-### 18.5 健壮性测试
+## 附录 D：已知来源限制
 
-- ZIP、YAML、Markdown 和 URL 解析器模糊测试。
-- 并发、取消、超时、内存限制和 Worker 崩溃恢复。
-- 情报库不可用、规则签名错误、报告存储失败。
+以下均为 <code>SOURCE_ISSUE</code>，最终实现保持原规则，不自动修正：
 
-## 19. 分阶段交付
+| 编号 | 来源限制 | 最终处理 |
+|---|---|---|
+| SI-01 | SRC-PKG-DOCX 的 ZIP 基础校验片段不完整，而 SRC-PKG-MD 内容完整。 | 包扫描复用现有平台实现；不从残缺片段推导规则。 |
+| SI-02 | <code>skill.upload.max-zip-bytes</code>、扩展名白名单和 <code>name</code> 正则没有给出最终配置值。 | 运行时读取平台配置并记录配置摘要；不硬编码替代值。 |
+| SI-03 | “文本看起来像二进制”的具体算法没有写明。 | 复用现有包扫描器，不重新定义算法。 |
+| SI-04 | 包扫描危险内容只检查前 64KB，可能漏掉后续内容。 | 保持 64KB，不扩展为全文扫描。 |
+| SI-05 | SVG 当前默认通过，没有魔数或 XML 安全校验。 | 保持默认通过。 |
+| SI-06 | <code>__MACOSX/**</code> 忽略规则与 <code>__macosx</code> 高风险片段的大小写关系未说明。 | 保持现有实现，不增加大小写规则。 |
+| SI-07 | description、正文质量、SQLi/XSS 数据流、依赖范围、内容合规和知识产权要求缺少确定性检测方法。 | 返回 <code>NOT_EVALUATED</code>，不使用自创启发式规则。 |
+| SI-08 | 部分安全项使用“等”，且原文未给出完整正则、边界、大小写和适用文件范围。 | 复用现有外部扫描器，不扩写关键词。 |
+| SI-09 | <code>HIGH/CRITICAL</code>、<code>MEDIUM/HIGH</code> 没有单一严重度选择规则；严重度与安全扫描 <code>passed</code> 的映射也未说明。 | 原样保留来源或扫描器结果；MCP 不归一化、不裁决。 |
+| SI-10 | PrivilegeEscalationDetector 跳过 Markdown 等文档，可能漏掉文档中的命令。 | 保持跳过规则。 |
+| SI-11 | <code>df.info()</code> 可能被 IOC 的 <code>.info</code> 规则当作域名。 | 该样例只记录潜在误报，不增加成员调用豁免。 |
+| SI-12 | <code>user: zh</code> 可能被用户名规则命中。 | 该样例只记录潜在误报，不增加 Markdown 或语言代码豁免。 |
+| SI-13 | <code>writer.encrypt("userpassword", "ownerpassword")</code> 不符合窄版 <code>password=</code> 条件，可能漏报。 | 不增加调用语义规则。 |
+| SI-14 | 可疑 TLD 列表包含可合法使用的 TLD，单独命中只能表达来源定义的可疑性。 | 保留原严重度，不升级为已知恶意。 |
+| SI-15 | 已知恶意 IP/URL 依赖外部数据库，但来源没有定义数据源、版本和不可用行为。 | 原样使用现有外部扫描器结果；MCP 不自行查询公网或定义陈旧策略。 |
 
-### 阶段 1：MVP
-
-- 一个 `scan_skill_quality` MCP Tool。
-- ZIP、目录和单 `SKILL.md` 输入。
-- 完整包扫描、元数据确定性规则和现有 15 类安全检测。
-- 结构化报告、证据脱敏、策略裁决和测试语料。
-- 内网离线运行，不执行任何 Skill 内容。
-
-### 阶段 2：准确率与企业增强
-
-- Markdown/AST 上下文分析。
-- 离线 IOC Adapter、规则签名和新鲜度策略。
-- 恶意文件/YARA/杀毒 Adapter。
-- SBOM、依赖 CVE、包来源和签名校验。
-- 人工复核、例外审批和误报反馈闭环。
-
-### 阶段 3：平台化
-
-- 上传平台正式门禁和报告持久化。
-- 规则灰度、回放、指标看板和告警。
-- 可选内部语义分析，并明确模型版本、数据边界和不可用策略。
-
-## 20. 验收标准
-
-- 四份参考文档中的确定性规则均有稳定规则 ID 和测试映射。
-- MCP 与本地测试 Adapter 对相同输入返回一致 Verdict。
-- `SKILL_MD_ONLY` 不读取或扫描同目录 ZIP。
-- 包扫描失败后不执行安全扫描、不入库。
-- 不执行包内脚本、不产生公网访问。
-- 所有秘密证据在结果、日志和数据库中脱敏。
-- 已知误报和漏报回归用例通过。
-- 每份报告包含完整版本快照和覆盖状态。
-- 扫描超时或能力异常不能返回 `PASS`。
-- 生产策略无法由 MCP 调用参数降级。
-
-## 21. 待确认事项
-
-1. 生产环境实际的扩展名白名单及 `name` 正则。
-2. `skill.upload.max-zip-bytes` 的正式值。
-3. ZIP 文件名与中文 `name` 的规范化和比较方式。
-4. MEDIUM 风险在不同内网等级下是 `REVIEW` 还是直接 `REJECT`。
-5. 内网 IOC 数据源、更新频率和最大允许陈旧时间。
-6. 恶意文件扫描器和语义分析是否纳入首期。
-7. 报告表是扩展 `t_skill_security_scan` 还是新建质量扫描表。
-8. 人工复核、例外审批、报告留存期限和责任角色。
+其中 <code>df.info()</code> 等样例的作用仅是固定“已知来源限制”，防止实现者把修正规则悄悄混入当前版本；它们不是新的白名单规则。

@@ -69,13 +69,7 @@ class Engine:
             item.finding
             for item in sorted(
                 pending.values(),
-                key=lambda item: (
-                    item.package_index,
-                    item.finding.entry_path,
-                    item.finding.line,
-                    item.finding.column,
-                    item.finding.rule_id,
-                ),
+                key=_pending_sort_key,
             )
         )
         coverage = Coverage(
@@ -156,4 +150,14 @@ def _finding_limit(package_name: str, entry_path: str) -> ScanError:
         "finding 数量超过限制",
         package_name=package_name,
         entry_path=entry_path,
+    )
+
+
+def _pending_sort_key(item: _PendingFinding) -> tuple[int, str, int, int, str]:
+    return (
+        item.package_index,
+        item.finding.entry_path,
+        item.finding.line,
+        item.finding.column,
+        item.finding.rule_id,
     )

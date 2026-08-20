@@ -5,7 +5,7 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Protocol, cast
 
 from .facts import SUPPORTED_HIDDEN_CODE_POINTS
 from .models import (
@@ -16,7 +16,7 @@ from .models import (
     RuleStatus,
     ScanError,
     _new_rule_set,
-    freeze_json,
+    freeze_mapping,
 )
 
 _DOCUMENT_KEYS = {
@@ -229,10 +229,25 @@ _EVIDENCE_TYPES = {
 }
 
 
-def canonical_json_bytes(document: Mapping[str, Any]) -> bytes:
+class _JsonModule(Protocol):
+    def dumps(
+        self,
+        value: object,
+        *,
+        ensure_ascii: bool,
+        allow_nan: bool,
+        sort_keys: bool,
+        separators: tuple[str, str],
+    ) -> str: ...
+
+
+_JSON = cast(_JsonModule, json)
+
+
+def canonical_json_bytes(document: Mapping[str, object]) -> bytes:
     _validate_json_value(document, "$", seen=set())
     try:
-        text = json.dumps(
+        text = _JSON.dumps(
             document,
             ensure_ascii=False,
             allow_nan=False,
@@ -244,9 +259,8 @@ def canonical_json_bytes(document: Mapping[str, Any]) -> bytes:
     return text.encode("utf-8")
 
 
-def compile_rules(document: Mapping[str, Any]) -> RuleSet:
-    if not isinstance(document, Mapping):
-        raise _invalid("规则文档必须是对象")
+def compile_rules(document: Mapping[str, object]) -> RuleSet:
+    document = _mapping(document, "规则文档必须是对象")
     digest = hashlib.sha256(canonical_json_bytes(document)).hexdigest()
     _require_exact_keys(document, _DOCUMENT_KEYS, "规则文档")
 
@@ -266,17 +280,15 @@ def compile_rules(document: Mapping[str, Any]) -> RuleSet:
     ):
         raise _invalid("textExtensions 必须使用小写字母或数字")
 
-    raw_vocabularies = document.get("vocabularies")
-    if not isinstance(raw_vocabularies, Mapping):
-        raise _invalid("vocabularies 必须是对象")
+    raw_vocabularies = _mapping(document.get("vocabularies"), "vocabularies 必须是对象")
     vocabularies: dict[str, tuple[str, ...]] = {}
     for name, values in raw_vocabularies.items():
         if not isinstance(name, str) or not name:
             raise _invalid("vocabularies 的名称必须是非空字符串")
         vocabularies[name] = _text_list(values, f"vocabularies.{name}", allow_empty=False)
 
-    raw_rules = document.get("rules")
-    if not isinstance(raw_rules, list) or not raw_rules:
+    raw_rules = _list(document.get("rules"))
+    if raw_rules is None or not raw_rules:
         raise _invalid("rules 必须是非空数组")
     rules: list[CompiledRule] = []
     seen_ids: set[str] = set()
@@ -302,37 +314,34 @@ def compile_rules(document: Mapping[str, Any]) -> RuleSet:
 
 
 def _compile_rule(
-    raw_rule: Any,
+    raw_rule: object,
     index: int,
     vocabularies: Mapping[str, tuple[str, ...]],
 ) -> CompiledRule:
     label = f"rules[{index}]"
-    if not isinstance(raw_rule, Mapping):
-        raise _invalid(f"{label} 必须是对象")
+    rule_values = _mapping(raw_rule, f"{label} 必须是对象")
     required = _RULE_KEYS - {"skipExtensions", "onlyPaths"}
-    actual = set(raw_rule)
+    actual = set(rule_values)
     missing = required - actual
     extra = actual - _RULE_KEYS
     if missing or extra:
         raise _invalid(_key_error(label, missing, extra))
 
-    rule_id = _required_text(raw_rule, "id", label)
+    rule_id = _required_text(rule_values, "id", label)
     if not re.fullmatch(r"SEC-[A-Z0-9]+-[0-9]{2}", rule_id):
         raise _invalid(f"{label}.id 格式无效")
-    severity = _required_text(raw_rule, "severity", label)
+    severity = _required_text(rule_values, "severity", label)
     if severity not in _SEVERITIES:
         raise _invalid(f"{label}.severity 无效")
     try:
-        status = RuleStatus(_required_text(raw_rule, "status", label))
+        status = RuleStatus(_required_text(rule_values, "status", label))
     except ValueError as exc:
         raise _invalid(f"{label}.status 无效") from exc
-    scope = _required_text(raw_rule, "scope", label)
+    scope = _required_text(rule_values, "scope", label)
     if scope not in _SCOPES:
         raise _invalid(f"{label}.scope 无效")
 
-    raw_match = raw_rule.get("match")
-    if not isinstance(raw_match, Mapping):
-        raise _invalid(f"{label}.match 必须是对象")
+    raw_match = _mapping(rule_values.get("match"), f"{label}.match 必须是对象")
     match_type = _required_text(raw_match, "type", f"{label}.match")
     if match_type not in _MATCH_TYPES:
         raise _invalid(f"{label}.match.type 不受支持")
@@ -353,9 +362,7 @@ def _compile_rule(
         if vocabulary is not None and vocabulary not in vocabularies:
             raise _invalid(f"{label}.match.{key} 引用了不存在的公共词汇表")
 
-    raw_evidence = raw_rule.get("evidence")
-    if not isinstance(raw_evidence, Mapping):
-        raise _invalid(f"{label}.evidence 必须是对象")
+    raw_evidence = _mapping(rule_values.get("evidence"), f"{label}.evidence 必须是对象")
     _require_exact_keys(raw_evidence, {"type", "prefixLength"}, f"{label}.evidence")
     prefix_length = raw_evidence.get("prefixLength")
     if isinstance(prefix_length, bool) or not isinstance(prefix_length, int) or prefix_length < 0:
@@ -363,7 +370,7 @@ def _compile_rule(
     if prefix_length > 8:
         raise _invalid(f"{label}.evidence.prefixLength 不得超过 8")
 
-    remediation = raw_rule.get("remediation")
+    remediation = rule_values.get("remediation")
     if remediation is not None and not isinstance(remediation, str):
         raise _invalid(f"{label}.remediation 必须是字符串或 null")
 
@@ -378,81 +385,92 @@ def _compile_rule(
     if detailed_evidence_match is not None and match_type != detailed_evidence_match:
         raise _invalid(f"{label}.evidence.type 与 match.type 不兼容")
 
-    parameters = {key: value for key, value in raw_match.items() if key != "type"}
+    parameters: dict[str, object] = {
+        key: value for key, value in raw_match.items() if key != "type"
+    }
     return CompiledRule(
         id=rule_id,
-        detector=_required_text(raw_rule, "detector", label),
-        name=_required_text(raw_rule, "name", label),
-        source_description=_required_text(raw_rule, "sourceDescription", label),
+        detector=_required_text(rule_values, "detector", label),
+        name=_required_text(rule_values, "name", label),
+        source_description=_required_text(rule_values, "sourceDescription", label),
         severity=severity,
         status=status,
         scope=scope,
         match_type=match_type,
-        parameters=freeze_json(parameters),
+        parameters=freeze_mapping(parameters),
         evidence=EvidencePolicy(
             type=evidence_type,
             prefix_length=prefix_length,
         ),
         remediation=remediation,
         source_limitations=_text_list(
-            raw_rule.get("sourceLimitations"), f"{label}.sourceLimitations"
+            rule_values.get("sourceLimitations"), f"{label}.sourceLimitations"
         ),
-        skip_extensions=_text_list(raw_rule.get("skipExtensions", []), f"{label}.skipExtensions"),
-        only_paths=_text_list(raw_rule.get("onlyPaths", []), f"{label}.onlyPaths"),
+        skip_extensions=_text_list(
+            rule_values.get("skipExtensions", list[object]()), f"{label}.skipExtensions"
+        ),
+        only_paths=_text_list(rule_values.get("onlyPaths", list[object]()), f"{label}.onlyPaths"),
     )
 
 
-def _validate_json_value(value: Any, path: str, seen: set[int]) -> None:
-    if value is None or isinstance(value, str | bool | int):
-        return
+def _validate_json_value(value: object, path: str, seen: set[int]) -> None:
+    match value:
+        case None | str() | bool() | int():
+            return
     if isinstance(value, float):
         if not math.isfinite(value):
             raise _invalid(f"{path} 包含非有限数值")
         return
     if isinstance(value, Mapping):
+        mapping = cast(Mapping[object, object], value)
         marker = id(value)
         if marker in seen:
             raise _invalid(f"{path} 包含循环引用")
         seen.add(marker)
-        for key, item in value.items():
+        for key, item in mapping.items():
             if not isinstance(key, str):
                 raise _invalid(f"{path} 的对象键必须是字符串")
             _validate_json_value(item, f"{path}.{key}", seen)
         seen.remove(marker)
         return
     if isinstance(value, list):
+        items = cast(list[object], value)
         marker = id(value)
         if marker in seen:
             raise _invalid(f"{path} 包含循环引用")
         seen.add(marker)
-        for index, item in enumerate(value):
+        for index, item in enumerate(items):
             _validate_json_value(item, f"{path}[{index}]", seen)
         seen.remove(marker)
         return
     raise _invalid(f"{path} 包含非 JSON 类型")
 
 
-def _required_text(values: Mapping[str, Any], key: str, label: str) -> str:
+def _required_text(values: Mapping[str, object], key: str, label: str) -> str:
     value = values.get(key)
     if not isinstance(value, str) or not value:
         raise _invalid(f"{label}.{key} 必须是非空字符串")
     return value
 
 
-def _text_list(value: Any, label: str, *, allow_empty: bool = True) -> tuple[str, ...]:
-    if not isinstance(value, list):
+def _text_list(value: object, label: str, *, allow_empty: bool = True) -> tuple[str, ...]:
+    items = _list(value)
+    if items is None:
         raise _invalid(f"{label} 必须是字符串数组")
-    if not allow_empty and not value:
+    if not allow_empty and not items:
         raise _invalid(f"{label} 不得为空")
-    if any(not isinstance(item, str) or not item for item in value):
-        raise _invalid(f"{label} 必须只包含非空字符串")
-    if len(value) != len(set(value)):
+    strings: list[str] = []
+    for item in items:
+        if not isinstance(item, str) or not item:
+            raise _invalid(f"{label} 必须只包含非空字符串")
+        strings.append(item)
+    if len(strings) != len(set(strings)):
         raise _invalid(f"{label} 不得包含重复值")
-    return tuple(value)
+    return tuple(strings)
 
 
 def _validate_match(
-    raw_match: Mapping[str, Any],
+    raw_match: Mapping[str, object],
     match_type: str,
     scope: str,
     label: str,
@@ -473,8 +491,8 @@ def _validate_match(
             allow_empty=key in _EMPTY_LIST_PARAMETERS,
         )
     if "groups" in actual:
-        groups = raw_match["groups"]
-        if not isinstance(groups, list) or len(groups) < 2:
+        groups = _list(raw_match["groups"])
+        if groups is None or len(groups) < 2:
             raise _invalid(f"{label}.match.groups 必须至少包含两个字符串数组")
         for index, group in enumerate(groups):
             _text_list(group, f"{label}.match.groups[{index}]", allow_empty=False)
@@ -511,23 +529,33 @@ def _validate_match(
     if raw_match.get("condition") not in {None, "suspicious_tld", "malicious_keyword"}:
         raise _invalid(f"{label}.match.condition 无效")
     if "maximumLength" in raw_match:
-        if raw_match["maximumLength"] < raw_match.get("minimumLength", 1):
+        maximum_length = _integer_value(raw_match, "maximumLength")
+        minimum_length = (
+            _integer_value(raw_match, "minimumLength") if "minimumLength" in raw_match else 1
+        )
+        if maximum_length < minimum_length:
             raise _invalid(f"{label}.match.maximumLength 不得小于 minimumLength")
-        if any(
-            raw_match["maximumLength"] <= len(prefix) for prefix in raw_match.get("prefixes", [])
-        ):
+        prefixes = _text_list(
+            raw_match.get("prefixes", list[object]()),
+            f"{label}.match.prefixes",
+        )
+        if any(maximum_length <= len(prefix) for prefix in prefixes):
             raise _invalid(f"{label}.match.maximumLength 必须容纳前缀后的 Token 内容")
-    if match_type == "base64_class" and raw_match["minimumLength"] < 50:
+    if match_type == "base64_class" and _integer_value(raw_match, "minimumLength") < 50:
         raise _invalid(f"{label}.match.minimumLength 不得小于 50")
-    if match_type == "hidden_characters" and any(
-        not re.fullmatch(r"[0-9A-Fa-f]{4,6}", item)
-        or item != item.upper()
-        or int(item, 16) > 0x10FFFF
-        or 0xD800 <= int(item, 16) <= 0xDFFF
-        or item.upper() not in SUPPORTED_HIDDEN_CODE_POINTS
-        for item in raw_match["codePoints"]
-    ):
-        raise _invalid(f"{label}.match.codePoints 包含不受支持的 Unicode 码点")
+    if match_type == "hidden_characters":
+        code_points = _text_list(
+            raw_match["codePoints"], f"{label}.match.codePoints", allow_empty=False
+        )
+        if any(
+            not re.fullmatch(r"[0-9A-Fa-f]{4,6}", item)
+            or item != item.upper()
+            or int(item, 16) > 0x10FFFF
+            or 0xD800 <= int(item, 16) <= 0xDFFF
+            or item.upper() not in SUPPORTED_HIDDEN_CODE_POINTS
+            for item in code_points
+        ):
+            raise _invalid(f"{label}.match.codePoints 包含不受支持的 Unicode 码点")
 
     expected_scope = {
         "file_groups": "file",
@@ -541,12 +569,19 @@ def _validate_match(
         raise _invalid(f"{label}.scope 与 {match_type} 不一致")
 
 
-def _require_exact_keys(values: Mapping[str, Any], expected: set[str], label: str) -> None:
+def _require_exact_keys(values: Mapping[str, object], expected: set[str], label: str) -> None:
     actual = set(values)
     missing = expected - actual
     extra = actual - expected
     if missing or extra:
         raise _invalid(_key_error(label, missing, extra))
+
+
+def _integer_value(values: Mapping[str, object], key: str) -> int:
+    value = values[key]
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _invalid(f"match.{key} 必须是整数")
+    return value
 
 
 def _key_error(label: str, missing: set[str], extra: set[str]) -> str:
@@ -560,3 +595,18 @@ def _key_error(label: str, missing: set[str], extra: set[str]) -> str:
 
 def _invalid(message: str) -> ScanError:
     return ScanError(ErrorCode.RULESET_INVALID, message)
+
+
+def _mapping(value: object, message: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise _invalid(message)
+    raw = cast(Mapping[object, object], value)
+    if not all(isinstance(key, str) for key in raw):
+        raise _invalid(message)
+    return cast(Mapping[str, object], raw)
+
+
+def _list(value: object) -> list[object] | None:
+    if not isinstance(value, list):
+        return None
+    return cast(list[object], value)

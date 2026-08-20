@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, BinaryIO
+from typing import BinaryIO, cast
 
 
 class ErrorCode(str, Enum):  # noqa: UP042
@@ -55,6 +55,29 @@ class EvidencePolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class MatchDetails:
+    classification: str | None = None
+    length: int | None = None
+    entropy: float | None = None
+    threshold: float | None = None
+    code_point: str | None = None
+
+    def values(self) -> dict[str, str | int | float]:
+        result: dict[str, str | int | float] = {}
+        if self.classification is not None:
+            result["classification"] = self.classification
+        if self.length is not None:
+            result["length"] = self.length
+        if self.entropy is not None:
+            result["entropy"] = self.entropy
+        if self.threshold is not None:
+            result["threshold"] = self.threshold
+        if self.code_point is not None:
+            result["code_point"] = self.code_point
+        return result
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledRule:
     id: str
     detector: str
@@ -64,7 +87,7 @@ class CompiledRule:
     status: RuleStatus
     scope: str
     match_type: str
-    parameters: Mapping[str, Any]
+    parameters: Mapping[str, object]
     evidence: EvidencePolicy
     remediation: str | None
     source_limitations: tuple[str, ...]
@@ -197,18 +220,50 @@ class RuleSet:
         object.__setattr__(self, "sha256", sha256)
         object.__setattr__(self, "default_skip_directories", default_skip_directories)
         object.__setattr__(self, "text_extensions", text_extensions)
-        object.__setattr__(self, "vocabularies", MappingProxyType(dict(vocabularies)))
+        frozen_vocabularies: Mapping[str, tuple[str, ...]] = MappingProxyType(dict(vocabularies))
+        object.__setattr__(self, "vocabularies", frozen_vocabularies)
         object.__setattr__(self, "rules", rules)
         object.__setattr__(self, "execution_plan", execution_plan)
 
 
-def _new_rule_set(**values: Any) -> RuleSet:
-    return RuleSet(**values, _seal=_RULESET_SEAL)
+def _new_rule_set(
+    *,
+    schema_version: str,
+    rule_version: str,
+    source_version: str,
+    sha256: str,
+    default_skip_directories: tuple[str, ...],
+    text_extensions: tuple[str, ...],
+    vocabularies: Mapping[str, tuple[str, ...]],
+    rules: tuple[CompiledRule, ...],
+    execution_plan: tuple[CompiledRule, ...],
+) -> RuleSet:
+    return RuleSet(
+        schema_version=schema_version,
+        rule_version=rule_version,
+        source_version=source_version,
+        sha256=sha256,
+        default_skip_directories=default_skip_directories,
+        text_extensions=text_extensions,
+        vocabularies=vocabularies,
+        rules=rules,
+        execution_plan=execution_plan,
+        _seal=_RULESET_SEAL,
+    )
 
 
-def freeze_json(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType({key: freeze_json(item) for key, item in value.items()})
+def freeze_mapping(values: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType({key: _freeze_value(value) for key, value in values.items()})
+
+
+def _freeze_value(value: object) -> object:
     if isinstance(value, list):
-        return tuple(freeze_json(item) for item in value)
+        list_items = cast(list[object], value)
+        return tuple(_freeze_value(item) for item in list_items)
+    if isinstance(value, Mapping):
+        mapping_items = cast(Mapping[str, object], value)
+        frozen: dict[str, object] = {
+            key: _freeze_value(item) for key, item in mapping_items.items()
+        }
+        return MappingProxyType(frozen)
     return value

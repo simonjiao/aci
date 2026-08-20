@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import stat
-import struct
 import unittest
 from io import BytesIO, StringIO
-from typing import ClassVar
+from typing import BinaryIO, ClassVar, cast
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
 from skill_security import (
@@ -71,8 +70,9 @@ def encrypted_flag(content: bytes) -> bytes:
     for signature, flag_offset in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
         position = 0
         while (position := data.find(signature, position)) >= 0:
-            flags = struct.unpack_from("<H", data, position + flag_offset)[0]
-            struct.pack_into("<H", data, position + flag_offset, flags | 1)
+            start = position + flag_offset
+            flags = int.from_bytes(data[start : start + 2], "little")
+            data[start : start + 2] = (flags | 1).to_bytes(2, "little")
             position += 4
     return bytes(data)
 
@@ -80,7 +80,8 @@ def encrypted_flag(content: bytes) -> bytes:
 def corrupt_first_entry(content: bytes, offset: int = 0) -> bytes:
     data = bytearray(content)
     position = data.index(b"PK\x03\x04")
-    name_length, extra_length = struct.unpack_from("<HH", data, position + 26)
+    name_length = int.from_bytes(data[position + 26 : position + 28], "little")
+    extra_length = int.from_bytes(data[position + 28 : position + 30], "little")
     content_start = position + 30 + name_length + extra_length
     data[content_start + offset] ^= 1
     return bytes(data)
@@ -90,7 +91,8 @@ def unsupported_compression(content: bytes) -> bytes:
     data = bytearray(content)
     for signature, method_offset in ((b"PK\x03\x04", 8), (b"PK\x01\x02", 10)):
         position = data.index(signature)
-        struct.pack_into("<H", data, position + method_offset, 99)
+        start = position + method_offset
+        data[start : start + 2] = (99).to_bytes(2, "little")
     return bytes(data)
 
 
@@ -180,7 +182,7 @@ class ArchiveSafetyTests(unittest.TestCase):
         )
 
     def test_non_binary_or_non_seekable_source_is_rejected(self) -> None:
-        source = PackageInput("text.zip", StringIO("not binary"))  # type: ignore[arg-type]
+        source = PackageInput("text.zip", cast(BinaryIO, StringIO("not binary")))
 
         self.assert_scan_error(ErrorCode.PACKAGE_SOURCE_INVALID, source)
 

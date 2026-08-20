@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -16,25 +17,23 @@ HARD_MAX_FINDINGS = 10_000
 class _PolicyContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    max_package_bytes: int = Field(gt=0, le=HARD_MAX_PACKAGE_BYTES)
-    max_entries_per_package: int = Field(gt=0, le=HARD_MAX_ENTRIES_PER_PACKAGE)
-    max_text_bytes_per_file: int = Field(gt=0, le=HARD_MAX_TEXT_BYTES_PER_FILE)
-    max_total_read_bytes: int = Field(gt=0, le=HARD_MAX_TOTAL_READ_BYTES)
-    max_findings: int = Field(gt=0, le=HARD_MAX_FINDINGS)
+    max_package_bytes: Annotated[int, Field(gt=0, le=HARD_MAX_PACKAGE_BYTES)]
+    max_entries_per_package: Annotated[int, Field(gt=0, le=HARD_MAX_ENTRIES_PER_PACKAGE)]
+    max_text_bytes_per_file: Annotated[int, Field(gt=0, le=HARD_MAX_TEXT_BYTES_PER_FILE)]
+    max_total_read_bytes: Annotated[int, Field(gt=0, le=HARD_MAX_TOTAL_READ_BYTES)]
+    max_findings: Annotated[int, Field(gt=0, le=HARD_MAX_FINDINGS)]
 
 
 def validate_policy(policy: ScanPolicy | None) -> ScanPolicy:
     if not isinstance(policy, ScanPolicy):
         raise ScanError(ErrorCode.POLICY_INVALID, "必须提供 ScanPolicy")
     try:
-        _PolicyContract.model_validate(
-            {
-                "max_package_bytes": policy.max_package_bytes,
-                "max_entries_per_package": policy.max_entries_per_package,
-                "max_text_bytes_per_file": policy.max_text_bytes_per_file,
-                "max_total_read_bytes": policy.max_total_read_bytes,
-                "max_findings": policy.max_findings,
-            }
+        _PolicyContract(
+            max_package_bytes=policy.max_package_bytes,
+            max_entries_per_package=policy.max_entries_per_package,
+            max_text_bytes_per_file=policy.max_text_bytes_per_file,
+            max_total_read_bytes=policy.max_total_read_bytes,
+            max_findings=policy.max_findings,
         )
     except ValidationError:
         pass

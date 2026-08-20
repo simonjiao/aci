@@ -59,14 +59,15 @@ def minimal_rule_document() -> dict[str, object]:
 class RuleCompilationTests(unittest.TestCase):
     def test_compiles_immutable_execution_plan(self) -> None:
         rules = compile_rules(minimal_rule_document())
+        execution_ids: tuple[str, ...] = tuple(rule.id for rule in rules.execution_plan)
 
         self.assertEqual(rules.schema_version, "1.0")
         self.assertEqual(rules.rule_version, "2026.08.20-test")
-        self.assertEqual(tuple(rule.id for rule in rules.execution_plan), ("SEC-TEST-01",))
+        self.assertEqual(execution_ids, ("SEC-TEST-01",))
         self.assertEqual(rules.rules[1].status, RuleStatus.UNSUPPORTED)
         self.assertEqual(len(rules.sha256), 64)
         with self.assertRaises(FrozenInstanceError):
-            rules.rule_version = "changed"  # type: ignore[misc]
+            rules.__setattr__("rule_version", "changed")
 
 
 def zip_bytes(entries: dict[str, str]) -> bytes:
@@ -77,7 +78,7 @@ def zip_bytes(entries: dict[str, str]) -> bytes:
     return stream.getvalue()
 
 
-def test_policy() -> ScanPolicy:
+def policy() -> ScanPolicy:
     return ScanPolicy(
         max_package_bytes=1024 * 1024,
         max_entries_per_package=100,
@@ -93,7 +94,7 @@ class ScanningTests(unittest.TestCase):
         stream = BytesIO(zip_bytes({"SKILL.md": "safe\ndanger command\n"}))
         stream.seek(2)
 
-        result = SecurityScan(test_policy()).scan(
+        result = SecurityScan(policy()).scan(
             ScanRequest((PackageInput("demo.zip", stream, "upload-7"),), rules)
         )
 

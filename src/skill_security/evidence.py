@@ -3,12 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from .models import CompiledRule
+from .models import CompiledRule, MatchDetails
 
 _MAX_EVIDENCE_LENGTH = 160
 _ASSIGNMENT_PATTERN = re.compile(
@@ -35,13 +33,13 @@ def process_evidence(
     raw: str,
     line: int,
     column: int,
-    details: Mapping[str, Any],
+    details: MatchDetails,
 ) -> ProcessedEvidence:
     cleaned = _display(rule, raw, details)
     structure = {
         "category": rule.evidence.type,
         "column": column,
-        "details": dict(details),
+        "details": details.values(),
         "length": len(raw),
         "line": line,
     }
@@ -49,7 +47,7 @@ def process_evidence(
     return ProcessedEvidence(cleaned, hashlib.sha256(encoded).hexdigest())
 
 
-def _display(rule: CompiledRule, raw: str, details: Mapping[str, Any]) -> str:
+def _display(rule: CompiledRule, raw: str, details: MatchDetails) -> str:
     evidence_type = rule.evidence.type
     if evidence_type in {"secret", "private_key", "token"}:
         visible_length = min(rule.evidence.prefix_length, max(0, len(raw) - 1))
@@ -61,14 +59,22 @@ def _display(rule: CompiledRule, raw: str, details: Mapping[str, Any]) -> str:
         prefix = raw[:visible_length]
         return f"{prefix}*** [length={len(raw)}]"
     if evidence_type == "base64":
-        return f"Base64 [length={len(raw)}; classification={details['classification']}]"
+        if details.classification is None:
+            raise ValueError("base64 evidence details are incomplete")
+        return f"Base64 [length={len(raw)}; classification={details.classification}]"
     if evidence_type == "entropy":
+        length = details.length
+        entropy = details.entropy
+        threshold = details.threshold
+        if length is None or entropy is None or threshold is None:
+            raise ValueError("entropy evidence details are incomplete")
         return (
-            f"high-entropy text [length={details['length']}; "
-            f"entropy={details['entropy']:.3f}; threshold={details['threshold']:.3f}]"
+            f"high-entropy text [length={length}; entropy={entropy:.3f}; threshold={threshold:.3f}]"
         )
     if evidence_type == "hidden":
-        return f"hidden character [{details['code_point']}]"
+        if details.code_point is None:
+            raise ValueError("hidden-character evidence details are incomplete")
+        return f"hidden character [{details.code_point}]"
     if evidence_type == "url":
         return _redact_url(raw)[:_MAX_EVIDENCE_LENGTH]
     cleaned = raw.replace("\r", " ").replace("\n", " ")

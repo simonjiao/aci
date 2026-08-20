@@ -6,12 +6,13 @@ import shlex
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from types import MappingProxyType
-from typing import Any, cast
+from typing import cast
 
 from .archive import PackageContent
 from .facts import FactIndex, FileFacts, LineFact
-from .models import CompiledRule, RuleSet
+from .models import CompiledRule, MatchDetails, RuleSet
+
+_JSON_LOADS = cast(Callable[[str], object], json.loads)
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,7 @@ class Match:
     line: int
     column: int
     raw_evidence: str
-    details: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    details: MatchDetails = field(default_factory=MatchDetails)
 
 
 Matcher = Callable[[CompiledRule, FactIndex, PackageContent, RuleSet], tuple[Match, ...]]
@@ -53,10 +54,10 @@ def _prefixed_token(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    prefixes = rule.parameters["prefixes"]
-    minimum = rule.parameters["minimumLength"]
-    maximum = rule.parameters.get("maximumLength")
-    alphabet = rule.parameters["alphabet"]
+    prefixes = _strings(rule, "prefixes")
+    minimum = _integer(rule, "minimumLength")
+    maximum = _optional_integer(rule, "maximumLength")
+    alphabet = _string(rule, "alphabet")
     tail = "[0-9A-Z]" if alphabet == "upper_alnum" else "[A-Za-z0-9_.-]"
     matches: list[Match] = []
     for file in _files(rule, facts):
@@ -66,7 +67,7 @@ def _prefixed_token(
                 upper = "" if maximum is None else str(maximum - len(prefix))
                 pattern = re.compile(re.escape(prefix) + tail + f"{{{remaining},{upper}}}")
                 for found in pattern.finditer(line.text):
-                    matches.append(_match(file, line, found.start(), found.group(0)))
+                    matches.append(_match(file, line, found.start(), _group(found, 0)))
     return tuple(matches)
 
 
@@ -76,17 +77,17 @@ def _field_value(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    fields = "|".join(re.escape(item) for item in rule.parameters["fields"])
-    separators = "|".join(re.escape(item) for item in rule.parameters["separators"])
-    minimum = rule.parameters["minimumValueLength"]
+    fields = "|".join(re.escape(item) for item in _strings(rule, "fields"))
+    separators = "|".join(re.escape(item) for item in _strings(rule, "separators"))
+    minimum = _integer(rule, "minimumValueLength")
     value = rf"[^\s,;#]{{{minimum},}}"
     pattern = re.compile(rf"(?<![A-Za-z0-9_])(?:{fields})\s*(?:{separators})\s*(['\"]?)({value})")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
             for found in pattern.finditer(line.text):
-                raw = found.group(2).rstrip("'\"")
-                quote = found.group(1)
+                raw = _group(found, 2).rstrip("'\"")
+                quote = _group(found, 1)
                 dynamic_syntax = not quote and any(character in raw for character in "()[]{}")
                 if len(raw) >= minimum and not dynamic_syntax:
                     matches.append(_match(file, line, found.start(2), raw))
@@ -101,7 +102,7 @@ def _private_key_header(
 ) -> tuple[Match, ...]:
     headers = tuple(
         f"-----BEGIN {key_type + ' ' if key_type != 'GENERIC' else ''}PRIVATE KEY-----"
-        for key_type in rule.parameters["keyTypes"]
+        for key_type in _strings(rule, "keyTypes")
     )
     return _line_term_matches(rule, facts, headers)
 
@@ -115,12 +116,12 @@ def _nonliteral_call(
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
-            for function in rule.parameters["functions"]:
+            for function in _strings(rule, "functions"):
                 pattern = re.compile(rf"(?<![A-Za-z0-9_.]){re.escape(function)}\s*\(([^)]*)\)")
                 for found in pattern.finditer(line.text):
-                    argument = found.group(1).lstrip()
+                    argument = _group(found, 1).lstrip()
                     if argument and not _starts_literal_string(argument):
-                        matches.append(_match(file, line, found.start(), found.group(0)))
+                        matches.append(_match(file, line, found.start(), _group(found, 0)))
     return tuple(matches)
 
 
@@ -133,10 +134,10 @@ def _function_call(
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
-            for function in rule.parameters["functions"]:
+            for function in _strings(rule, "functions"):
                 boundary = (
                     r"(?<![A-Za-z0-9_.])"
-                    if rule.parameters.get("bareOnly")
+                    if _boolean_or_false(rule, "bareOnly")
                     else r"(?<![A-Za-z0-9_])"
                 )
                 pattern = re.compile(boundary + re.escape(function) + r"\s*\(")
@@ -163,12 +164,12 @@ def _base64_class(
     _package: PackageContent,
     rules: RuleSet,
 ) -> tuple[Match, ...]:
-    expected = rule.parameters["classification"]
-    malicious = rules.vocabularies[rule.parameters["maliciousVocabulary"]]
-    minimum = rule.parameters["minimumLength"]
-    skip_prefixes = rule.parameters["skipLinePrefixes"]
-    skip_basenames = rule.parameters["skipBasenames"]
-    skip_fields = rule.parameters["skipFieldNames"]
+    expected = _string(rule, "classification")
+    malicious = rules.vocabularies[_string(rule, "maliciousVocabulary")]
+    minimum = _integer(rule, "minimumLength")
+    skip_prefixes = _strings(rule, "skipLinePrefixes")
+    skip_basenames = _strings(rule, "skipBasenames")
+    skip_fields = _strings(rule, "skipFieldNames")
     matches: list[Match] = []
     for file in _files(rule, facts):
         if PurePosixPath(file.entry.path).name in skip_basenames:
@@ -207,7 +208,7 @@ def _hex_escape_run(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    count = rule.parameters["minimumCount"]
+    count = _integer(rule, "minimumCount")
     return _pattern_matches(rule, facts, re.compile(rf"(?:\\x[0-9A-Fa-f]{{2}}){{{count},}}"))
 
 
@@ -217,7 +218,7 @@ def _chr_chain(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    minimum = rule.parameters["minimumCount"]
+    minimum = _integer(rule, "minimumCount")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
@@ -256,15 +257,15 @@ def _from_char_code(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    minimum = rule.parameters["minimumArguments"]
+    minimum = _integer(rule, "minimumArguments")
     matches: list[Match] = []
     pattern = re.compile(r"String\.fromCharCode\s*\(([^)]*)\)")
     for file in _files(rule, facts):
         for line in file.lines:
             for found in pattern.finditer(line.text):
-                arguments = [item for item in found.group(1).split(",") if item.strip()]
+                arguments = [item for item in _group(found, 1).split(",") if item.strip()]
                 if len(arguments) >= minimum:
-                    matches.append(_match(file, line, found.start(), found.group(0)))
+                    matches.append(_match(file, line, found.start(), _group(found, 0)))
     return tuple(matches)
 
 
@@ -274,14 +275,14 @@ def _atob_long(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    minimum = rule.parameters["minimumLength"]
+    minimum = _integer(rule, "minimumLength")
     pattern = re.compile(r"\batob\s*\(\s*(['\"])([A-Za-z0-9+/=]+)\1\s*\)")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
             for found in pattern.finditer(line.text):
-                if len(found.group(2)) >= minimum:
-                    matches.append(_match(file, line, found.start(), found.group(0)))
+                if len(_group(found, 2)) >= minimum:
+                    matches.append(_match(file, line, found.start(), _group(found, 0)))
     return tuple(matches)
 
 
@@ -291,7 +292,7 @@ def _hidden_characters(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    characters = {chr(int(value, 16)) for value in rule.parameters["codePoints"]}
+    characters = {chr(int(value, 16)) for value in _strings(rule, "codePoints")}
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
@@ -315,7 +316,7 @@ def _unicode_escape(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    return _line_term_matches(rule, facts, rule.parameters["escapes"])
+    return _line_term_matches(rule, facts, _strings(rule, "escapes"))
 
 
 def _entropy(
@@ -324,25 +325,25 @@ def _entropy(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    minimum = rule.parameters["minimumLength"]
+    minimum = _integer(rule, "minimumLength")
     matches: list[Match] = []
     for file in _files(rule, facts):
         path = PurePosixPath(file.entry.path)
-        if path.name in rule.parameters["skipBasenames"]:
+        if path.name in _strings(rule, "skipBasenames"):
             continue
-        elevated = path.suffix.removeprefix(".") in rule.parameters["elevatedExtensions"]
+        elevated = path.suffix.removeprefix(".") in _strings(rule, "elevatedExtensions")
         for line in file.lines:
             stripped = line.text.lstrip()
             if len(line.text) < minimum:
                 continue
-            if stripped.startswith(rule.parameters["dataPrefix"]):
+            if stripped.startswith(_string(rule, "dataPrefix")):
                 continue
-            if any(stripped.startswith(prefix) for prefix in rule.parameters["commentPrefixes"]):
+            if any(stripped.startswith(prefix) for prefix in _strings(rule, "commentPrefixes")):
                 continue
             threshold = (
-                rule.parameters["elevatedThreshold"]
+                _number(rule, "elevatedThreshold")
                 if elevated or line.has_cjk
-                else rule.parameters["threshold"]
+                else _number(rule, "threshold")
             )
             if line.entropy > threshold:
                 matches.append(
@@ -365,7 +366,7 @@ def _line_sequence(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    segments = rule.parameters["segments"]
+    segments = _strings(rule, "segments")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
@@ -389,7 +390,7 @@ def _line_groups(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    groups = rule.parameters["groups"]
+    groups = _groups(rule)
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
@@ -405,7 +406,7 @@ def _file_groups(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    groups = rule.parameters["groups"]
+    groups = _groups(rule)
     matches: list[Match] = []
     for file in _files(rule, facts):
         if not all(_file_has_group(file, group) for group in groups[:-1]):
@@ -421,7 +422,7 @@ def _package_groups(
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
     files = _files(rule, facts)
-    groups = rule.parameters["groups"]
+    groups = _groups(rule)
     if not all(any(_file_has_group(file, group) for file in files) for group in groups[:-1]):
         return ()
     return tuple(match for file in files for match in _group_anchors(file, groups[-1]))
@@ -433,7 +434,7 @@ def _command_token(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    terms = "|".join(re.escape(term) for term in rule.parameters["terms"])
+    terms = "|".join(re.escape(term) for term in _strings(rule, "terms"))
     pattern = re.compile(rf"(?<![A-Za-z0-9_-])(?:{terms})(?=\s|$|[;&|])")
     return _pattern_matches(rule, facts, pattern)
 
@@ -445,7 +446,7 @@ def _filename_double_extension(
     rules: RuleSet,
 ) -> tuple[Match, ...]:
     executables = {
-        value.lower() for value in rules.vocabularies[rule.parameters["executableVocabulary"]]
+        value.lower() for value in rules.vocabularies[_string(rule, "executableVocabulary")]
     }
     matches: list[Match] = []
     for path in package.filenames:
@@ -464,7 +465,7 @@ def _filename_keywords(
     matches: list[Match] = []
     for path in package.filenames:
         name = PurePosixPath(path).name
-        for term in rule.parameters["terms"]:
+        for term in _strings(rule, "terms"):
             if (index := name.find(term)) >= 0:
                 matches.append(Match(path, 0, index + 1, name))
     return tuple(matches)
@@ -480,7 +481,7 @@ def _url_keywords(
     for file in _files(rule, facts):
         for line in file.lines:
             for url in line.urls:
-                if any(term in url.raw for term in rule.parameters["terms"]):
+                if any(term in url.raw for term in _strings(rule, "terms")):
                     matches.append(Match(file.entry.path, line.number, url.column, url.raw))
     return tuple(matches)
 
@@ -491,8 +492,8 @@ def _support_content(
     _package: PackageContent,
     _rules: RuleSet,
 ) -> tuple[Match, ...]:
-    matches = list(_line_term_matches(rule, facts, rule.parameters["terms"]))
-    if rule.parameters["phonePattern"]:
+    matches = list(_line_term_matches(rule, facts, _strings(rule, "terms")))
+    if _boolean(rule, "phonePattern"):
         phone = re.compile(r"\bcall\s+1-\d{3}-\d{3}-\d{4}\b")
         matches.extend(_pattern_matches(rule, facts, phone))
     return tuple(matches)
@@ -513,24 +514,24 @@ def _package_command_keyword(
     _package: PackageContent,
     rules: RuleSet,
 ) -> tuple[Match, ...]:
-    command = rule.parameters["command"]
-    actions = "|".join(re.escape(action) for action in rule.parameters["actions"])
-    keywords = rules.vocabularies[rule.parameters["keywordVocabulary"]]
+    command = _string(rule, "command")
+    actions = "|".join(re.escape(action) for action in _strings(rule, "actions"))
+    keywords = rules.vocabularies[_string(rule, "keywordVocabulary")]
     pattern = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(command)}\s+(?:{actions})\s+([^;&|]+)")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
             for found in pattern.finditer(line.text):
                 try:
-                    arguments = shlex.split(found.group(1), posix=True)
+                    arguments = shlex.split(_group(found, 1), posix=True)
                 except ValueError:
-                    arguments = found.group(1).split()
+                    arguments = _group(found, 1).split()
                 candidates = _package_arguments(command, arguments)
                 for candidate in candidates:
                     if any(keyword in candidate for keyword in keywords):
                         column = line.text.find(candidate, found.start(1))
                         matches.append(_match(file, line, column, line.text))
-    if rule.parameters["includePackageJsonName"]:
+    if _boolean(rule, "includePackageJsonName"):
         for file in _files(rule, facts):
             if PurePosixPath(file.entry.path).name != "package.json":
                 continue
@@ -604,7 +605,7 @@ def _docker_nonofficial(
     for file in _files(rule, facts):
         for line in file.lines:
             for found in pattern.finditer(line.text):
-                image = found.group(1)
+                image = _group(found, 1)
                 first = image.split("/", 1)[0].lower()
                 is_registry = "/" in image and (
                     "." in first or ":" in first or first == "localhost"
@@ -632,16 +633,16 @@ def _package_json_hooks(
     _package: PackageContent,
     rules: RuleSet,
 ) -> tuple[Match, ...]:
-    hooks = rules.vocabularies[rule.parameters["hooksVocabulary"]]
-    suspicious = rules.vocabularies[rule.parameters["suspiciousVocabulary"]]
-    mode = rule.parameters["mode"]
+    hooks = rules.vocabularies[_string(rule, "hooksVocabulary")]
+    suspicious = rules.vocabularies[_string(rule, "suspiciousVocabulary")]
+    mode = _string(rule, "mode")
     matches: list[Match] = []
     for file in _files(rule, facts):
         if PurePosixPath(file.entry.path).name != "package.json":
             continue
         parsed = _json_object(file.entry.text)
-        scripts = parsed.get("scripts") if parsed is not None else None
-        if not isinstance(scripts, dict):
+        scripts = _string_mapping(parsed.get("scripts")) if parsed is not None else None
+        if scripts is None:
             continue
         for hook in hooks:
             value = scripts.get(hook)
@@ -671,13 +672,13 @@ def _url_ioc(
     _package: PackageContent,
     rules: RuleSet,
 ) -> tuple[Match, ...]:
-    tlds = tuple(item.lower() for item in rules.vocabularies[rule.parameters["tldVocabulary"]])
-    keywords = rules.vocabularies[rule.parameters["keywordVocabulary"]]
+    tlds = tuple(item.lower() for item in rules.vocabularies[_string(rule, "tldVocabulary")])
+    keywords = rules.vocabularies[_string(rule, "keywordVocabulary")]
     executables = tuple(
-        item.lower() for item in rules.vocabularies[rule.parameters["executableVocabulary"]]
+        item.lower() for item in rules.vocabularies[_string(rule, "executableVocabulary")]
     )
-    condition = rule.parameters["condition"]
-    require_executable = rule.parameters["requireExecutable"]
+    condition = _string(rule, "condition")
+    require_executable = _boolean(rule, "requireExecutable")
     matches: list[Match] = []
     for file in _files(rule, facts):
         for line in file.lines:
@@ -701,7 +702,7 @@ def _standalone_domain_tld(
 ) -> tuple[Match, ...]:
     endings = [
         re.escape(item.removeprefix("."))
-        for item in rules.vocabularies[rule.parameters["tldVocabulary"]]
+        for item in rules.vocabularies[_string(rule, "tldVocabulary")]
     ]
     pattern = re.compile(
         rf"(?<![A-Za-z0-9-])(?:[A-Za-z0-9-]+\.)+(?:{'|'.join(endings)})\b",
@@ -714,16 +715,16 @@ def _standalone_domain_tld(
             for found in pattern.finditer(line.text):
                 if any(found.start() < end and found.end() > start for start, end in url_spans):
                     continue
-                matches.append(_match(file, line, found.start(), found.group(0)))
+                matches.append(_match(file, line, found.start(), _group(found, 0)))
     return tuple(matches)
 
 
-def _json_object(text: str) -> dict[str, Any] | None:
+def _json_object(text: str) -> Mapping[str, object] | None:
     try:
-        value = json.loads(text)
+        value = _JSON_LOADS(text)
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
-    return value if isinstance(value, dict) else None
+    return _string_mapping(value)
 
 
 def _match_from_text(file: FileFacts, needle: str, raw: str) -> Match:
@@ -786,10 +787,10 @@ def _line_term_matches(
 
 
 def _terms(rule: CompiledRule, rules: RuleSet) -> tuple[str, ...]:
-    vocabulary = rule.parameters.get("vocabulary")
+    vocabulary = _optional_string(rule, "vocabulary")
     if vocabulary is not None:
         return rules.vocabularies[vocabulary]
-    return cast(tuple[str, ...], rule.parameters["terms"])
+    return _strings(rule, "terms")
 
 
 def _files(rule: CompiledRule, facts: FactIndex) -> tuple[FileFacts, ...]:
@@ -808,19 +809,73 @@ def _match(
     line: LineFact,
     zero_based_column: int,
     raw: str,
-    **details: Any,
+    *,
+    classification: str | None = None,
+    length: int | None = None,
+    entropy: float | None = None,
+    threshold: float | None = None,
+    code_point: str | None = None,
 ) -> Match:
     return Match(
         file.entry.path,
         line.number,
         zero_based_column + 1,
         raw,
-        MappingProxyType(details),
+        MatchDetails(classification, length, entropy, threshold, code_point),
     )
+
+
+def _strings(rule: CompiledRule, key: str) -> tuple[str, ...]:
+    return cast(tuple[str, ...], rule.parameters[key])
+
+
+def _groups(rule: CompiledRule) -> tuple[tuple[str, ...], ...]:
+    return cast(tuple[tuple[str, ...], ...], rule.parameters["groups"])
+
+
+def _integer(rule: CompiledRule, key: str) -> int:
+    return cast(int, rule.parameters[key])
+
+
+def _optional_integer(rule: CompiledRule, key: str) -> int | None:
+    return cast(int | None, rule.parameters.get(key))
+
+
+def _number(rule: CompiledRule, key: str) -> float:
+    return float(cast(int | float, rule.parameters[key]))
+
+
+def _boolean(rule: CompiledRule, key: str) -> bool:
+    return cast(bool, rule.parameters[key])
+
+
+def _boolean_or_false(rule: CompiledRule, key: str) -> bool:
+    return cast(bool, rule.parameters.get(key, False))
+
+
+def _string(rule: CompiledRule, key: str) -> str:
+    return cast(str, rule.parameters[key])
+
+
+def _optional_string(rule: CompiledRule, key: str) -> str | None:
+    return cast(str | None, rule.parameters.get(key))
+
+
+def _string_mapping(value: object) -> Mapping[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw = cast(Mapping[object, object], value)
+    if not all(isinstance(key, str) for key in raw):
+        return None
+    return cast(Mapping[str, object], raw)
 
 
 def _starts_literal_string(argument: str) -> bool:
     return bool(re.match(r"(?i:(?:r|u|b|br|rb)?)(?:'|\")", argument))
+
+
+def _group(match: re.Match[str], index: int) -> str:
+    return cast(str, match.group(index))
 
 
 _MATCHERS: dict[str, Matcher] = {

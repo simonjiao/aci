@@ -22,7 +22,7 @@
 | 语言 | Python 3.11 或更高版本。 |
 | 项目与依赖管理 | 使用 uv；`uv.lock` 固化完整依赖解析结果。 |
 | 运行依赖 | Pydantic 2 用于公开输入边界的严格运行时校验，其余使用标准库。 |
-| 质量工具 | pre-commit 在提交前运行 mypy strict 和 Pydantic mypy 插件；Ruff、pytest 作为开发依赖。 |
+| 质量工具 | pre-commit 在提交前运行 mypy strict 和 Pydantic mypy 插件，并禁止显式 `Any` 及 `Any` 表达式；Ruff、pytest 作为开发依赖。 |
 | 规则格式 | JSON 兼容对象，并提供对应 Schema。 |
 | 压缩包读取 | `zipfile` 对只读、可定位二进制流进行限量读取。 |
 | 状态存储 | 无数据库；一次调用内的状态只保存在内存。 |
@@ -242,6 +242,7 @@ Module 必须保持以下安全约束：
 - 每条 finding 可追溯，且不泄露完整密码、密钥、Token 或私钥。
 - 扫描错误不能被表示为 `PASS`，Module 不产生任何输出文件。
 - 依赖必须与 `uv.lock` 一致，源码和测试必须通过 mypy strict 及 Pydantic mypy 插件检查。
+- 源码和测试的 mypy Any 表达式精度必须为 100%，不得包含显式 `Any` 或 `type: ignore`。
 
 | 内容 | 预计非空有效行 |
 |---|---:|

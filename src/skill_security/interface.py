@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Annotated, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .engine import Engine
 from .limits import validate_policy
@@ -20,21 +20,14 @@ from .models import (
 class _PackageContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    display_name: str = Field(min_length=1)
+    display_name: Annotated[str, Field(min_length=1)]
     source_id: str | None
 
 
 class _RequestContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    packages: tuple[_PackageContract, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def display_names_are_unique(self) -> Self:
-        names = tuple(package.display_name for package in self.packages)
-        if len(names) != len(set(names)):
-            raise ValueError("package display names must be unique")
-        return self
+    packages: Annotated[tuple[_PackageContract, ...], Field(min_length=1)]
 
 
 class SecurityScan:
@@ -46,30 +39,44 @@ class SecurityScan:
         return Engine(self._policy).scan(request)
 
 
-def _validate_request(request: ScanRequest) -> None:
-    if not isinstance(request, ScanRequest):
+def _validate_request(value: object) -> None:
+    if not isinstance(value, ScanRequest):
         raise ScanError(ErrorCode.REQUEST_INVALID, "请求必须是 ScanRequest")
-    if not isinstance(request.rules, RuleSet):
-        raise ScanError(ErrorCode.REQUEST_INVALID, "请求必须使用 compile_rules() 生成的 RuleSet")
-    if not isinstance(request.packages, tuple):
-        raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须是 tuple")
-    for package in request.packages:
-        if not isinstance(package, PackageInput):
-            raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须只包含 PackageInput")
+    request = value
+    _require_rule_set(request.rules)
+    packages = _require_packages(request.packages)
     try:
-        _RequestContract.model_validate(
-            {
-                "packages": tuple(
-                    {
-                        "display_name": package.display_name,
-                        "source_id": package.source_id,
-                    }
-                    for package in request.packages
+        contract = _RequestContract(
+            packages=tuple(
+                _PackageContract(
+                    display_name=package.display_name,
+                    source_id=package.source_id,
                 )
-            }
+                for package in packages
+            )
         )
     except ValidationError:
         pass
     else:
+        names = tuple(package.display_name for package in contract.packages)
+        if len(names) != len(set(names)):
+            raise ScanError(ErrorCode.REQUEST_INVALID, "扫描请求字段无效")
         return
     raise ScanError(ErrorCode.REQUEST_INVALID, "扫描请求字段无效")
+
+
+def _require_rule_set(value: object) -> RuleSet:
+    if not isinstance(value, RuleSet):
+        raise ScanError(ErrorCode.REQUEST_INVALID, "请求必须使用 compile_rules() 生成的 RuleSet")
+    return value
+
+
+def _require_packages(value: object) -> tuple[PackageInput, ...]:
+    if not isinstance(value, tuple):
+        raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须是 tuple")
+    packages: list[PackageInput] = []
+    for item in cast(tuple[object, ...], value):
+        if not isinstance(item, PackageInput):
+            raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须只包含 PackageInput")
+        packages.append(item)
+    return tuple(packages)

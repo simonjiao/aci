@@ -5,8 +5,8 @@ import hashlib
 import stat
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any
-from zipfile import ZipFile
+from typing import BinaryIO, Protocol, cast
+from zipfile import ZipFile, ZipInfo
 
 from .facts import TextEntry
 from .limits import ReadBudget
@@ -22,6 +22,10 @@ class PackageContent:
     entry_count: int
     text_entries: tuple[TextEntry, ...]
     filenames: tuple[str, ...]
+
+
+class _ZipEntryReader(Protocol):
+    def open(self, name: ZipInfo, mode: str = "r") -> BinaryIO: ...
 
 
 def read_package(
@@ -95,12 +99,6 @@ def read_package(
 
 def _validate_stream(package: PackageInput) -> int:
     stream = package.stream
-    if not callable(getattr(stream, "read", None)) or not callable(getattr(stream, "seek", None)):
-        raise ScanError(
-            ErrorCode.PACKAGE_SOURCE_INVALID,
-            "包内容必须是可读、可定位的二进制流",
-            package_name=package.display_name,
-        )
     try:
         position = stream.tell()
         stream.seek(position)
@@ -128,9 +126,7 @@ def _measure_and_hash(package: PackageInput, policy: ScanPolicy) -> tuple[int, s
             )
         stream.seek(0)
         digest = hashlib.sha256()
-        while chunk := stream.read(1024 * 1024):
-            if not isinstance(chunk, bytes):
-                raise TypeError
+        while chunk := _require_bytes(stream.read(1024 * 1024)):
             digest.update(chunk)
         return size, digest.hexdigest()
     except ScanError:
@@ -143,9 +139,15 @@ def _measure_and_hash(package: PackageInput, policy: ScanPolicy) -> tuple[int, s
         ) from exc
 
 
+def _require_bytes(value: object) -> bytes:
+    if not isinstance(value, bytes):
+        raise TypeError
+    return value
+
+
 def _read_text(
     archive: ZipFile,
-    info: Any,
+    info: ZipInfo,
     package: PackageInput,
     policy: ScanPolicy,
     budget: ReadBudget,
@@ -156,7 +158,8 @@ def _read_text(
         budget.consume(info.file_size, package_name=package.display_name, entry_path=path)
         content = bytearray()
         validator = codecs.getincrementaldecoder("utf-8")("strict")
-        with archive.open(info, "r") as entry:
+        opened = cast(_ZipEntryReader, archive).open(info, "r")
+        with opened as entry:
             while chunk := entry.read(64 * 1024):
                 validator.decode(chunk, final=False)
                 # Detection retains only the per-file sample. The remaining stream is

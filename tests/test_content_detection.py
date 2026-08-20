@@ -16,6 +16,7 @@ from skill_security import (
     SecurityScan,
     compile_rules,
 )
+from tests.support import dict_field
 
 
 def rule(rule_id: str, match: dict[str, object], evidence_type: str) -> dict[str, object]:
@@ -94,7 +95,7 @@ class ContentDetectionTests(unittest.TestCase):
             },
             "token",
         )
-        item["evidence"]["prefixLength"] = 8  # type: ignore[index]
+        dict_field(item, "evidence")["prefixLength"] = 8
 
         finding = scan_text("token=t-x", rules_for(item))[0]
 

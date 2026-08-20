@@ -4,10 +4,11 @@ import copy
 import json
 import math
 import unittest
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
+from typing import cast
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from skill_security import (
@@ -20,6 +21,7 @@ from skill_security import (
     SecurityScan,
     compile_rules,
 )
+from tests.support import dict_field, list_field, object_dict
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,14 +85,16 @@ def policy(**changes: int) -> ScanPolicy:
     return ScanPolicy(**values)
 
 
+def first_rule(values: dict[str, object]) -> dict[str, object]:
+    return object_dict(list_field(values, "rules")[0])
+
+
 class RuleContractTests(unittest.TestCase):
     def test_canonical_hash_ignores_object_key_order_but_keeps_array_order(self) -> None:
         original = document()
         reordered = dict(reversed(tuple(original.items())))
         reversed_rules = copy.deepcopy(original)
-        rule_items = reversed_rules["rules"]
-        self.assertIsInstance(rule_items, list)
-        assert isinstance(rule_items, list)
+        rule_items = list_field(reversed_rules, "rules")
         rule_items.reverse()
 
         self.assertEqual(compile_rules(original).sha256, compile_rules(reordered).sha256)
@@ -104,14 +108,15 @@ class RuleContractTests(unittest.TestCase):
 
         self.assertIsInstance(rules.rules[0].parameters, MappingProxyType)
         with self.assertRaises(TypeError):
-            rules.rules[0].parameters["terms"] = ("changed",)  # type: ignore[index]
+            mutable = cast(MutableMapping[str, object], rules.rules[0].parameters)
+            mutable["terms"] = ("changed",)
 
     def test_invalid_parameters_are_rejected_without_echoing_value(self) -> None:
         unknown = document()
         secret_key = "password=do-not-echo"
-        unknown["rules"][0]["match"][secret_key] = "value"  # type: ignore[index]
+        dict_field(first_rule(unknown), "match")[secret_key] = "value"
         non_finite = document()
-        non_finite["rules"][0]["match"]["threshold"] = math.inf  # type: ignore[index]
+        dict_field(first_rule(non_finite), "match")["threshold"] = math.inf
 
         for invalid in (unknown, non_finite):
             with self.subTest(document=json.dumps(invalid, default=str)[:30]):
@@ -121,10 +126,10 @@ class RuleContractTests(unittest.TestCase):
                 self.assertNotIn("do-not-echo", raised.exception.message)
 
     def test_parameters_that_cannot_execute_deterministically_are_rejected(self) -> None:
-        invalid_documents = []
+        invalid_documents: list[dict[str, object]] = []
 
         invalid_id = document()
-        invalid_id["rules"][0]["id"] = "SEC-test"  # type: ignore[index]
+        first_rule(invalid_id)["id"] = "SEC-test"
         invalid_documents.append(invalid_id)
 
         non_normal_extension = document()
@@ -132,7 +137,7 @@ class RuleContractTests(unittest.TestCase):
         invalid_documents.append(non_normal_extension)
 
         impossible_token_length = document()
-        impossible_token_length["rules"][0]["match"] = {  # type: ignore[index]
+        first_rule(impossible_token_length)["match"] = {
             "type": "prefixed_token",
             "prefixes": ["github_pat_"],
             "minimumLength": 1,
@@ -142,14 +147,14 @@ class RuleContractTests(unittest.TestCase):
         invalid_documents.append(impossible_token_length)
 
         invalid_code_point = document()
-        invalid_code_point["rules"][0]["match"] = {  # type: ignore[index]
+        first_rule(invalid_code_point)["match"] = {
             "type": "hidden_characters",
             "codePoints": ["0041"],
         }
         invalid_documents.append(invalid_code_point)
 
         ignored_field_alphabet = document()
-        ignored_field_alphabet["rules"][0]["match"] = {  # type: ignore[index]
+        first_rule(ignored_field_alphabet)["match"] = {
             "type": "field_value",
             "fields": ["password"],
             "separators": ["="],
@@ -159,12 +164,12 @@ class RuleContractTests(unittest.TestCase):
         invalid_documents.append(ignored_field_alphabet)
 
         invalid_scope = document()
-        invalid_scope["rules"][0]["scope"] = "package"  # type: ignore[index]
+        first_rule(invalid_scope)["scope"] = "package"
         invalid_documents.append(invalid_scope)
 
         unsupported_base64_threshold = document()
         unsupported_base64_threshold["vocabularies"] = {"bad": ["exec"]}
-        unsupported_base64_threshold["rules"][0]["match"] = {  # type: ignore[index]
+        first_rule(unsupported_base64_threshold)["match"] = {
             "type": "base64_class",
             "classification": "suspicious_text",
             "minimumLength": 49,
@@ -176,7 +181,7 @@ class RuleContractTests(unittest.TestCase):
         invalid_documents.append(unsupported_base64_threshold)
 
         invalid_condition_type = document()
-        invalid_condition_type["rules"][0]["match"] = {  # type: ignore[index]
+        first_rule(invalid_condition_type)["match"] = {
             "type": "url_ioc",
             "condition": [],
             "requireExecutable": False,
@@ -192,18 +197,18 @@ class RuleContractTests(unittest.TestCase):
         invalid_documents.append(invalid_condition_type)
 
         incompatible_evidence = document()
-        incompatible_evidence["rules"][0]["evidence"] = {  # type: ignore[index]
+        first_rule(incompatible_evidence)["evidence"] = {
             "type": "base64",
             "prefixLength": 0,
         }
         invalid_documents.append(incompatible_evidence)
 
         excessive_evidence_prefix = document()
-        excessive_evidence_prefix["rules"][0]["evidence"]["prefixLength"] = 9  # type: ignore[index]
+        dict_field(first_rule(excessive_evidence_prefix), "evidence")["prefixLength"] = 9
         invalid_documents.append(excessive_evidence_prefix)
 
         for invalid in invalid_documents:
-            with self.subTest(match=invalid["rules"][0]["match"]):  # type: ignore[index]
+            with self.subTest(match=dict_field(first_rule(invalid), "match")):
                 with self.assertRaises(ScanError) as raised:
                     compile_rules(invalid)
                 self.assertEqual(raised.exception.code, ErrorCode.RULESET_INVALID)
@@ -214,19 +219,19 @@ class PublicContractTests(unittest.TestCase):
         rules = compile_rules(document())
         valid_package = PackageInput("sample.zip", BytesIO(archive_bytes({"a.txt": "safe"})))
         invalid_policy = ScanPolicy(
-            "POLICY_CANARY_SECRET",  # type: ignore[arg-type]
+            cast(int, "POLICY_CANARY_SECRET"),
             100,
             64 * 1024,
             1024 * 1024,
             100,
         )
         invalid_package = PackageInput(
-            b"REQUEST_CANARY_SECRET",  # type: ignore[arg-type]
+            cast(str, b"REQUEST_CANARY_SECRET"),
             BytesIO(archive_bytes({"a.txt": "safe"})),
         )
 
         invalid_calls: list[tuple[Callable[[], object], ErrorCode]] = [
-            (lambda: SecurityScan(None), ErrorCode.POLICY_INVALID),  # type: ignore[arg-type]
+            (lambda: SecurityScan(cast(ScanPolicy, None)), ErrorCode.POLICY_INVALID),
             (lambda: SecurityScan(invalid_policy), ErrorCode.POLICY_INVALID),
             (
                 lambda: SecurityScan(policy(max_entries_per_package=1001)),
@@ -274,10 +279,14 @@ class PublicContractTests(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first.conclusion, Conclusion.REVIEW_REQUIRED)
-        self.assertEqual(
-            [(finding.entry_path, finding.rule_id) for finding in first.findings],
-            [("a.txt", "SEC-TEST-01"), ("z.txt", "SEC-TEST-02")],
-        )
+        actual_order: list[tuple[str, str]] = [
+            (finding.entry_path, finding.rule_id) for finding in first.findings
+        ]
+        expected_order: list[tuple[str, str]] = [
+            ("a.txt", "SEC-TEST-01"),
+            ("z.txt", "SEC-TEST-02"),
+        ]
+        self.assertEqual(actual_order, expected_order)
         self.assertEqual(len({finding.id for finding in first.findings}), 2)
         self.assertTrue(all(len(finding.id) == 64 for finding in first.findings))
 

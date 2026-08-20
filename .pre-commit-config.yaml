@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: mypy-strict
+        name: mypy strict (src, tests, Pydantic)
+        entry: uv run --locked mypy
+        language: system
+        pass_filenames: false
+        always_run: true

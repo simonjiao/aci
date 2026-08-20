@@ -22,7 +22,7 @@
 | 语言 | Python 3.11 或更高版本。 |
 | 项目与依赖管理 | 使用 uv；`uv.lock` 固化完整依赖解析结果。 |
 | 运行依赖 | Pydantic 2 用于公开输入边界的严格运行时校验，其余使用标准库。 |
-| 质量工具 | mypy strict、Pydantic mypy 插件、Ruff 和 pytest 作为开发依赖。 |
+| 质量工具 | pre-commit 在提交前运行 mypy strict 和 Pydantic mypy 插件；Ruff、pytest 作为开发依赖。 |
 | 规则格式 | JSON 兼容对象，并提供对应 Schema。 |
 | 压缩包读取 | `zipfile` 对只读、可定位二进制流进行限量读取。 |
 | 状态存储 | 无数据库；一次调用内的状态只保存在内存。 |
@@ -61,6 +61,7 @@ SecurityScan Interface
 | `config/security-rules.json` | 外置规则文档。 |
 | `config/security-rules.schema.json` | 规则文档结构约束。 |
 | `pyproject.toml`、`uv.lock` | 依赖声明、工具配置和可复现依赖锁定。 |
+| `.pre-commit-config.yaml` | 提交前执行完整源码和测试类型检查。 |
 
 ## 3. Module Interface
 
@@ -230,6 +231,7 @@ Module 必须保持以下安全约束：
 - 多包扫描失败时不返回完整结论。
 - 两个现有 Skill ZIP 的端到端回归。
 - `uv lock --check`、`uv run mypy` 和 `uv run ruff check src tests` 必须通过。
+- 安装本地 hook 后，未显式跳过的当前 clone 提交执行完整 mypy strict 检查；不可绕过的门禁需要 CI 或服务端策略。
 
 验收结果应满足：
 

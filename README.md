@@ -7,11 +7,13 @@
 
 ```bash
 uv sync --locked
-uv lock --check
-uv run mypy
-uv run ruff check src tests
-uv run python -m unittest discover -s tests
+uv run --locked pre-commit install
+uv run --locked pre-commit run --all-files
+uv run --locked ruff check src tests
+uv run --locked python -m unittest discover -s tests
 ```
+
+该 hook 仅作用于当前 clone，且可被 Git 显式跳过；不可绕过的门禁需要 CI 或服务端策略。
 
 规则位于 `config/security-rules.json`。接口、行为和安全边界详见
 [设计文档](docs/detectors/skill-security-scan-module-design.md)。

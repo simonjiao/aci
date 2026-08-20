@@ -4,7 +4,15 @@ import unittest
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from skill_security import PackageInput, ScanPolicy, ScanRequest, SecurityScan, compile_rules
+from skill_security import (
+    PackageInput,
+    RuleSet,
+    ScanPolicy,
+    ScanRequest,
+    ScanResult,
+    SecurityScan,
+    compile_rules,
+)
 
 VOCABULARIES = {
     "malicious": ["evil", "payload"],
@@ -19,7 +27,7 @@ def rules_for(
     match: dict[str, object],
     evidence: str = "command",
     scope: str = "line",
-):
+) -> RuleSet:
     return compile_rules(
         {
             "schemaVersion": "1.0",
@@ -47,7 +55,7 @@ def rules_for(
     )
 
 
-def scan(text: str, rules, path: str = "sample.txt"):
+def scan(text: str, rules: RuleSet, path: str = "sample.txt") -> ScanResult:
     stream = BytesIO()
     with ZipFile(stream, "w", ZIP_DEFLATED) as archive:
         archive.writestr(path, text)

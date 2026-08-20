@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import unittest
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
@@ -87,7 +88,10 @@ class RuleContractTests(unittest.TestCase):
         original = document()
         reordered = dict(reversed(tuple(original.items())))
         reversed_rules = copy.deepcopy(original)
-        reversed_rules["rules"].reverse()  # type: ignore[union-attr]
+        rule_items = reversed_rules["rules"]
+        self.assertIsInstance(rule_items, list)
+        assert isinstance(rule_items, list)
+        rule_items.reverse()
 
         self.assertEqual(compile_rules(original).sha256, compile_rules(reordered).sha256)
         self.assertNotEqual(
@@ -180,7 +184,7 @@ class RuleContractTests(unittest.TestCase):
             "keywordVocabulary": "keywords",
             "executableVocabulary": "executables",
         }
-        invalid_condition_type["vocabularies"] = {  # type: ignore[index]
+        invalid_condition_type["vocabularies"] = {
             "tlds": [".xyz"],
             "keywords": ["evil"],
             "executables": [".exe"],
@@ -209,9 +213,21 @@ class PublicContractTests(unittest.TestCase):
     def test_policy_and_request_validation_use_structured_errors(self) -> None:
         rules = compile_rules(document())
         valid_package = PackageInput("sample.zip", BytesIO(archive_bytes({"a.txt": "safe"})))
+        invalid_policy = ScanPolicy(
+            "POLICY_CANARY_SECRET",  # type: ignore[arg-type]
+            100,
+            64 * 1024,
+            1024 * 1024,
+            100,
+        )
+        invalid_package = PackageInput(
+            b"REQUEST_CANARY_SECRET",  # type: ignore[arg-type]
+            BytesIO(archive_bytes({"a.txt": "safe"})),
+        )
 
-        invalid_calls = [
+        invalid_calls: list[tuple[Callable[[], object], ErrorCode]] = [
             (lambda: SecurityScan(None), ErrorCode.POLICY_INVALID),  # type: ignore[arg-type]
+            (lambda: SecurityScan(invalid_policy), ErrorCode.POLICY_INVALID),
             (
                 lambda: SecurityScan(policy(max_entries_per_package=1001)),
                 ErrorCode.POLICY_INVALID,
@@ -226,12 +242,23 @@ class PublicContractTests(unittest.TestCase):
                 ),
                 ErrorCode.REQUEST_INVALID,
             ),
+            (
+                lambda: SecurityScan(policy()).scan(ScanRequest((invalid_package,), rules)),
+                ErrorCode.REQUEST_INVALID,
+            ),
         ]
         for call, expected in invalid_calls:
             with self.subTest(expected=expected):
                 with self.assertRaises(ScanError) as raised:
                     call()
                 self.assertEqual(raised.exception.code, expected)
+                self.assertIsNone(raised.exception.__context__)
+                self.assertIsNone(raised.exception.__cause__)
+                self.assertNotIn("CANARY_SECRET", str(raised.exception))
+
+    def test_public_string_enums_keep_original_string_behavior(self) -> None:
+        self.assertEqual(str(Conclusion.PASS), "Conclusion.PASS")
+        self.assertEqual(format(ErrorCode.REQUEST_INVALID), "ErrorCode.REQUEST_INVALID")
 
     def test_result_is_deterministic_deduplicated_and_sorted(self) -> None:
         rules = compile_rules(document())

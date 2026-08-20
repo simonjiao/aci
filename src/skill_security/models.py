@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, BinaryIO
 
 
-class ErrorCode(str, Enum):
+class ErrorCode(str, Enum):  # noqa: UP042
     REQUEST_INVALID = "REQUEST_INVALID"
     POLICY_INVALID = "POLICY_INVALID"
     RULESET_INVALID = "RULESET_INVALID"
@@ -17,18 +17,18 @@ class ErrorCode(str, Enum):
     RESOURCE_LIMIT_EXCEEDED = "RESOURCE_LIMIT_EXCEEDED"
 
 
-class RuleStatus(str, Enum):
+class RuleStatus(str, Enum):  # noqa: UP042
     APPROVED = "APPROVED"
     UNRESOLVED = "UNRESOLVED"
     UNSUPPORTED = "UNSUPPORTED"
 
 
-class Conclusion(str, Enum):
+class Conclusion(str, Enum):  # noqa: UP042
     PASS = "PASS"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
 
-class FindingStatus(str, Enum):
+class FindingStatus(str, Enum):  # noqa: UP042
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
 

@@ -7,7 +7,15 @@ from collections import Counter
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from skill_security import PackageInput, ScanPolicy, ScanRequest, SecurityScan, compile_rules
+from skill_security import (
+    Finding,
+    PackageInput,
+    RuleSet,
+    ScanPolicy,
+    ScanRequest,
+    SecurityScan,
+    compile_rules,
+)
 
 
 def rule(rule_id: str, match: dict[str, object], evidence_type: str) -> dict[str, object]:
@@ -26,7 +34,10 @@ def rule(rule_id: str, match: dict[str, object], evidence_type: str) -> dict[str
     }
 
 
-def rules_for(item: dict[str, object], vocabularies: dict[str, list[str]] | None = None):
+def rules_for(
+    item: dict[str, object],
+    vocabularies: dict[str, list[str]] | None = None,
+) -> RuleSet:
     return compile_rules(
         {
             "schemaVersion": "1.0",
@@ -40,7 +51,7 @@ def rules_for(item: dict[str, object], vocabularies: dict[str, list[str]] | None
     )
 
 
-def scan_text(text: str, compiled) -> tuple:
+def scan_text(text: str, compiled: RuleSet) -> tuple[Finding, ...]:
     stream = BytesIO()
     with ZipFile(stream, "w", ZIP_DEFLATED) as archive:
         archive.writestr("sample.py", text)

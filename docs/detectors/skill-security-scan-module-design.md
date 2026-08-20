@@ -20,7 +20,9 @@
 | 项目 | 选择 |
 |---|---|
 | 语言 | Python 3.11 或更高版本。 |
-| 运行依赖 | 仅使用标准库；`pytest` 作为开发依赖。 |
+| 项目与依赖管理 | 使用 uv；`uv.lock` 固化完整依赖解析结果。 |
+| 运行依赖 | Pydantic 2 用于公开输入边界的严格运行时校验，其余使用标准库。 |
+| 质量工具 | mypy strict、Pydantic mypy 插件、Ruff 和 pytest 作为开发依赖。 |
 | 规则格式 | JSON 兼容对象，并提供对应 Schema。 |
 | 压缩包读取 | `zipfile` 对只读、可定位二进制流进行限量读取。 |
 | 状态存储 | 无数据库；一次调用内的状态只保存在内存。 |
@@ -47,7 +49,7 @@ SecurityScan Interface
 | 路径 | 职责 |
 |---|---|
 | `src/skill_security/__init__.py` | 导出稳定的公开 Interface 和模型。 |
-| `src/skill_security/interface.py` | 实现公开 Interface：校验输入模型，调用 Engine，成功时返回结果，失败时抛出 `ScanError`。 |
+| `src/skill_security/interface.py` | 实现公开 Interface：通过 Pydantic 严格校验请求字段，调用 Engine，失败时抛出 `ScanError`。 |
 | `src/skill_security/models.py` | 包输入、规则集、finding、覆盖信息、结果和错误模型。 |
 | `src/skill_security/rules.py` | 规则文档校验、编译、版本和执行计划。 |
 | `src/skill_security/archive.py` | ZIP 条目枚举、限量读取和哈希。 |
@@ -55,9 +57,10 @@ SecurityScan Interface
 | `src/skill_security/detectors.py` | 受控匹配类型和组合检测算法。 |
 | `src/skill_security/engine.py` | 独占完整扫描流程编排，包括执行顺序、事实复用、finding 汇总和去重。 |
 | `src/skill_security/evidence.py` | 证据脱敏、截断和指纹。 |
-| `src/skill_security/limits.py` | 资源限制及硬上限。 |
+| `src/skill_security/limits.py` | 通过 Pydantic 严格校验资源策略及硬上限。 |
 | `config/security-rules.json` | 外置规则文档。 |
 | `config/security-rules.schema.json` | 规则文档结构约束。 |
+| `pyproject.toml`、`uv.lock` | 依赖声明、工具配置和可复现依赖锁定。 |
 
 ## 3. Module Interface
 
@@ -69,6 +72,8 @@ SecurityScan Interface
 | 扫描 | `ScanRequest` | `ScanResult` | 对请求中的全部包执行完整安全扫描。 |
 
 构造 `SecurityScan` 时必须提供不可变的 `ScanPolicy`，不存在隐式默认策略。构造时立即校验策略；同一实例不保存请求状态，可连续处理多个扫描请求。
+
+请求字段和资源策略使用 Pydantic strict 模式校验，不执行字符串到数字等隐式转换。Pydantic 校验失败统一转换为不携带原始校验内容的 `ScanError`。
 
 两个操作成功时返回表中结果，失败时统一抛出 `ScanError`，不返回错误对象或部分 `ScanResult`。
 
@@ -224,6 +229,7 @@ Module 必须保持以下安全约束：
 - 规则规范化哈希、密钥脱敏、finding 稳定标识、去重和排序。
 - 多包扫描失败时不返回完整结论。
 - 两个现有 Skill ZIP 的端到端回归。
+- `uv lock --check`、`uv run mypy` 和 `uv run ruff check src tests` 必须通过。
 
 验收结果应满足：
 
@@ -233,6 +239,7 @@ Module 必须保持以下安全约束：
 - finding 只表示安全规则命中，状态均为 `REVIEW_REQUIRED`。
 - 每条 finding 可追溯，且不泄露完整密码、密钥、Token 或私钥。
 - 扫描错误不能被表示为 `PASS`，Module 不产生任何输出文件。
+- 依赖必须与 `uv.lock` 一致，源码和测试必须通过 mypy strict 及 Pydantic mypy 插件检查。
 
 | 内容 | 预计非空有效行 |
 |---|---:|

@@ -4,14 +4,17 @@ import stat
 import struct
 import unittest
 from io import BytesIO, StringIO
+from typing import ClassVar
 from zipfile import ZIP_STORED, ZipFile, ZipInfo
 
 from skill_security import (
     ErrorCode,
     PackageInput,
+    RuleSet,
     ScanError,
     ScanPolicy,
     ScanRequest,
+    ScanResult,
     SecurityScan,
     compile_rules,
 )
@@ -92,11 +95,17 @@ def unsupported_compression(content: bytes) -> bytes:
 
 
 class ArchiveSafetyTests(unittest.TestCase):
+    rules: ClassVar[RuleSet]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.rules = compile_rules(document())
 
-    def scan(self, packages: tuple[PackageInput, ...], scan_policy: ScanPolicy | None = None):
+    def scan(
+        self,
+        packages: tuple[PackageInput, ...],
+        scan_policy: ScanPolicy | None = None,
+    ) -> ScanResult:
         return SecurityScan(scan_policy or policy()).scan(ScanRequest(packages, self.rules))
 
     def assert_scan_error(

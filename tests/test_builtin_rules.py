@@ -5,9 +5,18 @@ import json
 import unittest
 from io import BytesIO
 from pathlib import Path
+from typing import ClassVar
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from skill_security import PackageInput, ScanPolicy, ScanRequest, SecurityScan, compile_rules
+from skill_security import (
+    PackageInput,
+    RuleSet,
+    ScanPolicy,
+    ScanRequest,
+    ScanResult,
+    SecurityScan,
+    compile_rules,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 RULE_DOCUMENT = json.loads((ROOT / "config/security-rules.json").read_text(encoding="utf-8"))
@@ -18,13 +27,13 @@ RULE_CASES = json.loads(
 POLICY = ScanPolicy(2 * 1024 * 1024, 100, 64 * 1024, 2 * 1024 * 1024, 100)
 
 
-def compile_one(rule_id: str):
+def compile_one(rule_id: str) -> RuleSet:
     document = copy.deepcopy(RULE_DOCUMENT)
     document["rules"] = [item for item in document["rules"] if item["id"] == rule_id]
     return compile_rules(document)
 
 
-def scan(entries: dict[str, str], rules):
+def scan(entries: dict[str, str], rules: RuleSet) -> ScanResult:
     stream = BytesIO()
     with ZipFile(stream, "w", ZIP_DEFLATED) as archive:
         for path, content in entries.items():
@@ -35,6 +44,8 @@ def scan(entries: dict[str, str], rules):
 
 
 class BuiltinRuleTests(unittest.TestCase):
+    rules: ClassVar[RuleSet]
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.rules = compile_rules(RULE_DOCUMENT)

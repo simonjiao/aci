@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from typing import Self
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
 from .engine import Engine
 from .limits import validate_policy
 from .models import (
@@ -11,6 +15,26 @@ from .models import (
     ScanRequest,
     ScanResult,
 )
+
+
+class _PackageContract(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    display_name: str = Field(min_length=1)
+    source_id: str | None
+
+
+class _RequestContract(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    packages: tuple[_PackageContract, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def display_names_are_unique(self) -> Self:
+        names = tuple(package.display_name for package in self.packages)
+        if len(names) != len(set(names)):
+            raise ValueError("package display names must be unique")
+        return self
 
 
 class SecurityScan:
@@ -27,16 +51,25 @@ def _validate_request(request: ScanRequest) -> None:
         raise ScanError(ErrorCode.REQUEST_INVALID, "请求必须是 ScanRequest")
     if not isinstance(request.rules, RuleSet):
         raise ScanError(ErrorCode.REQUEST_INVALID, "请求必须使用 compile_rules() 生成的 RuleSet")
-    if not isinstance(request.packages, tuple) or not request.packages:
-        raise ScanError(ErrorCode.REQUEST_INVALID, "包列表不得为空")
-    names: set[str] = set()
+    if not isinstance(request.packages, tuple):
+        raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须是 tuple")
     for package in request.packages:
         if not isinstance(package, PackageInput):
             raise ScanError(ErrorCode.REQUEST_INVALID, "packages 必须只包含 PackageInput")
-        if not isinstance(package.display_name, str) or not package.display_name:
-            raise ScanError(ErrorCode.REQUEST_INVALID, "包显示名称必须是非空字符串")
-        if package.display_name in names:
-            raise ScanError(ErrorCode.REQUEST_INVALID, "同一请求中的包显示名称必须唯一")
-        if package.source_id is not None and not isinstance(package.source_id, str):
-            raise ScanError(ErrorCode.REQUEST_INVALID, "包来源标识必须是字符串或 null")
-        names.add(package.display_name)
+    try:
+        _RequestContract.model_validate(
+            {
+                "packages": tuple(
+                    {
+                        "display_name": package.display_name,
+                        "source_id": package.source_id,
+                    }
+                    for package in request.packages
+                )
+            }
+        )
+    except ValidationError:
+        pass
+    else:
+        return
+    raise ScanError(ErrorCode.REQUEST_INVALID, "扫描请求字段无效")

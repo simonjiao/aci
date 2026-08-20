@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 from .archive import PackageContent
 from .facts import FactIndex, FileFacts, LineFact
@@ -789,7 +789,7 @@ def _terms(rule: CompiledRule, rules: RuleSet) -> tuple[str, ...]:
     vocabulary = rule.parameters.get("vocabulary")
     if vocabulary is not None:
         return rules.vocabularies[vocabulary]
-    return rule.parameters["terms"]
+    return cast(tuple[str, ...], rule.parameters["terms"])
 
 
 def _files(rule: CompiledRule, facts: FactIndex) -> tuple[FileFacts, ...]:

@@ -4,7 +4,7 @@ import copy
 import json
 import math
 import unittest
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterator, Mapping, MutableMapping
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType
@@ -24,6 +24,20 @@ from skill_security import (
 from tests.support import dict_field, list_field, object_dict
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class TokenCanarySecretDocument(Mapping[str, object]):
+    def __init__(self, values: Mapping[str, object]) -> None:
+        self._values = values
+
+    def __getitem__(self, key: str) -> object:
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
 
 
 def document() -> dict[str, object]:
@@ -124,6 +138,41 @@ class RuleContractTests(unittest.TestCase):
                     compile_rules(invalid)
                 self.assertEqual(raised.exception.code, ErrorCode.RULESET_INVALID)
                 self.assertNotIn("do-not-echo", raised.exception.message)
+
+    def test_invalid_rule_value_does_not_escape_through_exception_chain(self) -> None:
+        invalid = document()
+        first_rule(invalid)["status"] = "TOKEN_CANARY_SECRET"
+
+        with self.assertRaises(ScanError) as raised:
+            compile_rules(invalid)
+
+        self.assertEqual(raised.exception.code, ErrorCode.RULESET_INVALID)
+        self.assertNotIn("CANARY_SECRET", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_invalid_rule_document_does_not_escape_through_exception_chain(self) -> None:
+        invalid = TokenCanarySecretDocument(document())
+
+        with self.assertRaises(ScanError) as raised:
+            compile_rules(invalid)
+
+        self.assertEqual(raised.exception.code, ErrorCode.RULESET_INVALID)
+        self.assertNotIn("CanarySecret", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_non_utf8_rule_value_does_not_escape_raw_encoding_error(self) -> None:
+        invalid = document()
+        invalid["ruleVersion"] = "TOKEN_CANARY_SECRET\ud800"
+
+        with self.assertRaises(ScanError) as raised:
+            compile_rules(invalid)
+
+        self.assertEqual(raised.exception.code, ErrorCode.RULESET_INVALID)
+        self.assertNotIn("CANARY_SECRET", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def test_parameters_that_cannot_execute_deterministically_are_rejected(self) -> None:
         invalid_documents: list[dict[str, object]] = []

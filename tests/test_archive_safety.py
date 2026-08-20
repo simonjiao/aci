@@ -96,6 +96,49 @@ def unsupported_compression(content: bytes) -> bytes:
     return bytes(data)
 
 
+class SecretTellStream(BytesIO):
+    def tell(self) -> int:
+        raise ValueError("PASSWORD_CANARY_SECRET")
+
+
+class SecretReadStream(BytesIO):
+    def read(self, size: int | None = -1) -> bytes:
+        raise ScanError(ErrorCode.PACKAGE_SOURCE_INVALID, "PASSWORD_CANARY_SECRET")
+
+
+class SecretRewindStream(BytesIO):
+    def __init__(self, content: bytes) -> None:
+        super().__init__(content)
+        self._measured = False
+        self._failed = False
+
+    def read(self, size: int | None = -1) -> bytes:
+        content = super().read(size)
+        if not content:
+            self._measured = True
+        return content
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if self._measured and not self._failed:
+            self._failed = True
+            raise ScanError(ErrorCode.PACKAGE_SOURCE_INVALID, "PASSWORD_CANARY_SECRET")
+        return super().seek(offset, whence)
+
+
+class SecretRestoreStream(BytesIO):
+    def __init__(self, content: bytes) -> None:
+        super().__init__(content)
+        super().seek(3)
+        self._position_three_seeks = 0
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if (offset, whence) == (3, 0):
+            self._position_three_seeks += 1
+            if self._position_three_seeks > 1:
+                raise ValueError("PASSWORD_CANARY_SECRET")
+        return super().seek(offset, whence)
+
+
 class ArchiveSafetyTests(unittest.TestCase):
     rules: ClassVar[RuleSet]
 
@@ -119,6 +162,8 @@ class ArchiveSafetyTests(unittest.TestCase):
         with self.assertRaises(ScanError) as raised:
             self.scan((package,), scan_policy)
         self.assertEqual(raised.exception.code, code)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
         return raised.exception
 
     def test_invalid_zip_restores_stream_and_does_not_close_it(self) -> None:
@@ -185,6 +230,34 @@ class ArchiveSafetyTests(unittest.TestCase):
         source = PackageInput("text.zip", cast(BinaryIO, StringIO("not binary")))
 
         self.assert_scan_error(ErrorCode.PACKAGE_SOURCE_INVALID, source)
+
+    def test_external_stream_error_does_not_escape_through_exception_chain(self) -> None:
+        streams: tuple[BinaryIO, ...] = (
+            SecretTellStream(),
+            SecretReadStream(b"content"),
+            SecretRewindStream(archive_bytes({"sample.txt": "safe"})),
+        )
+        for stream in streams:
+            with self.subTest(stream=type(stream).__name__):
+                error = self.assert_scan_error(
+                    ErrorCode.PACKAGE_SOURCE_INVALID,
+                    PackageInput("secret.zip", stream),
+                )
+
+                self.assertNotIn("CANARY_SECRET", str(error))
+                self.assertIsNone(error.__cause__)
+                self.assertIsNone(error.__context__)
+
+    def test_restore_error_does_not_escape_through_exception_chain(self) -> None:
+        contents = (archive_bytes({"sample.txt": "safe"}), b"not a zip")
+        for content in contents:
+            with self.subTest(valid_zip=content != b"not a zip"):
+                error = self.assert_scan_error(
+                    ErrorCode.PACKAGE_SOURCE_INVALID,
+                    PackageInput("secret.zip", SecretRestoreStream(content)),
+                )
+
+                self.assertNotIn("CANARY_SECRET", str(error))
 
     def test_entry_package_total_read_and_finding_limits_are_hard_failures(self) -> None:
         two_entries = PackageInput(

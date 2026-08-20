@@ -254,9 +254,12 @@ def canonical_json_bytes(document: Mapping[str, object]) -> bytes:
             sort_keys=True,
             separators=(",", ":"),
         )
-    except (TypeError, ValueError) as exc:
-        raise _invalid("规则文档不是有效的 JSON 兼容对象") from exc
-    return text.encode("utf-8")
+        encoded = text.encode("utf-8")
+    except (TypeError, ValueError):
+        pass
+    else:
+        return encoded
+    raise _invalid("规则文档不是有效的 JSON 兼容对象")
 
 
 def compile_rules(document: Mapping[str, object]) -> RuleSet:
@@ -333,10 +336,7 @@ def _compile_rule(
     severity = _required_text(rule_values, "severity", label)
     if severity not in _SEVERITIES:
         raise _invalid(f"{label}.severity 无效")
-    try:
-        status = RuleStatus(_required_text(rule_values, "status", label))
-    except ValueError as exc:
-        raise _invalid(f"{label}.status 无效") from exc
+    status = _rule_status(_required_text(rule_values, "status", label), label)
     scope = _required_text(rule_values, "scope", label)
     if scope not in _SCOPES:
         raise _invalid(f"{label}.scope 无效")
@@ -451,6 +451,14 @@ def _required_text(values: Mapping[str, object], key: str, label: str) -> str:
     if not isinstance(value, str) or not value:
         raise _invalid(f"{label}.{key} 必须是非空字符串")
     return value
+
+
+def _rule_status(value: str, label: str) -> RuleStatus:
+    try:
+        return RuleStatus(value)
+    except ValueError:
+        pass
+    raise _invalid(f"{label}.status 无效")
 
 
 def _text_list(value: object, label: str, *, allow_empty: bool = True) -> tuple[str, ...]:

@@ -36,11 +36,26 @@ def read_package(
 ) -> PackageContent:
     stream = package.stream
     original_position = _validate_stream(package)
+    content: PackageContent | None = None
+    failure: ScanError | None = None
     try:
         size, digest = _measure_and_hash(package, policy)
-        stream.seek(0)
+        rewind_succeeded = False
         try:
-            with ZipFile(stream, "r", allowZip64=True) as archive:
+            stream.seek(0)
+        except Exception:
+            pass
+        else:
+            rewind_succeeded = True
+        if not rewind_succeeded:
+            raise _package_source_error(package)
+
+        archive = _open_archive(stream)
+        if archive is None:
+            raise _zip_open_error(package)
+
+        try:
+            with archive:
                 infos = archive.infolist()
                 if len(infos) > policy.max_entries_per_package:
                     raise ScanError(
@@ -71,30 +86,69 @@ def read_package(
                     text_entries.append(_read_text(archive, info, package, policy, budget))
         except ScanError:
             raise
-        except Exception as exc:
-            raise ScanError(
-                ErrorCode.ZIP_OPEN_FAILED,
-                "ZIP 内容无法打开",
-                package_name=package.display_name,
-            ) from exc
-        return PackageContent(
-            display_name=package.display_name,
-            source_id=package.source_id,
-            size_bytes=size,
-            sha256=digest,
-            entry_count=len(infos),
-            text_entries=tuple(text_entries),
-            filenames=tuple(filenames),
+        except Exception:
+            pass
+        else:
+            content = PackageContent(
+                display_name=package.display_name,
+                source_id=package.source_id,
+                size_bytes=size,
+                sha256=digest,
+                entry_count=len(infos),
+                text_entries=tuple(text_entries),
+                filenames=tuple(filenames),
+            )
+        if content is None:
+            raise _zip_open_error(package)
+    except ScanError as error:
+        failure = ScanError(
+            error.code,
+            error.message,
+            package_name=error.package_name,
+            entry_path=error.entry_path,
         )
-    finally:
-        try:
-            stream.seek(original_position)
-        except Exception as exc:
-            raise ScanError(
-                ErrorCode.PACKAGE_SOURCE_INVALID,
-                "扫描后无法恢复包内容流的位置",
-                package_name=package.display_name,
-            ) from exc
+
+    restore_failed = False
+    try:
+        stream.seek(original_position)
+    except Exception:
+        restore_failed = True
+    if restore_failed:
+        raise _package_source_error(
+            package,
+            "扫描后无法恢复包内容流的位置",
+        )
+    if failure is not None:
+        raise failure
+    if content is None:
+        raise _zip_open_error(package)
+    return content
+
+
+def _package_source_error(
+    package: PackageInput,
+    message: str = "包内容必须是可读、可定位的二进制流",
+) -> ScanError:
+    return ScanError(
+        ErrorCode.PACKAGE_SOURCE_INVALID,
+        message,
+        package_name=package.display_name,
+    )
+
+
+def _zip_open_error(package: PackageInput) -> ScanError:
+    return ScanError(
+        ErrorCode.ZIP_OPEN_FAILED,
+        "ZIP 内容无法打开",
+        package_name=package.display_name,
+    )
+
+
+def _open_archive(stream: BinaryIO) -> ZipFile | None:
+    try:
+        return ZipFile(stream, "r", allowZip64=True)
+    except Exception:
+        return None
 
 
 def _validate_stream(package: PackageInput) -> int:
@@ -102,41 +156,40 @@ def _validate_stream(package: PackageInput) -> int:
     try:
         position = stream.tell()
         stream.seek(position)
-    except Exception as exc:
-        raise ScanError(
-            ErrorCode.PACKAGE_SOURCE_INVALID,
-            "包内容必须是可读、可定位的二进制流",
-            package_name=package.display_name,
-        ) from exc
-    return position
+    except Exception:
+        pass
+    else:
+        return position
+    raise _package_source_error(package)
 
 
 def _measure_and_hash(package: PackageInput, policy: ScanPolicy) -> tuple[int, str]:
     stream = package.stream
+    size_value: object = None
     try:
         stream.seek(0, 2)
-        size = stream.tell()
-        if not isinstance(size, int) or size < 0:
-            raise TypeError
-        if size > policy.max_package_bytes:
-            raise ScanError(
-                ErrorCode.RESOURCE_LIMIT_EXCEEDED,
-                "ZIP 内容大小超过限制",
-                package_name=package.display_name,
-            )
+        size_value = stream.tell()
+    except Exception:
+        pass
+    if not isinstance(size_value, int) or size_value < 0:
+        raise _package_source_error(package)
+    size = size_value
+    if size > policy.max_package_bytes:
+        raise ScanError(
+            ErrorCode.RESOURCE_LIMIT_EXCEEDED,
+            "ZIP 内容大小超过限制",
+            package_name=package.display_name,
+        )
+    try:
         stream.seek(0)
         digest = hashlib.sha256()
         while chunk := _require_bytes(stream.read(1024 * 1024)):
             digest.update(chunk)
+    except Exception:
+        pass
+    else:
         return size, digest.hexdigest()
-    except ScanError:
-        raise
-    except Exception as exc:
-        raise ScanError(
-            ErrorCode.PACKAGE_SOURCE_INVALID,
-            "包内容必须是可读、可定位的二进制流",
-            package_name=package.display_name,
-        ) from exc
+    raise _package_source_error(package)
 
 
 def _require_bytes(value: object) -> bytes:
@@ -154,8 +207,8 @@ def _read_text(
 ) -> TextEntry:
     path = info.filename
     amount = min(info.file_size, policy.max_text_bytes_per_file)
+    budget.consume(info.file_size, package_name=package.display_name, entry_path=path)
     try:
-        budget.consume(info.file_size, package_name=package.display_name, entry_path=path)
         content = bytearray()
         validator = codecs.getincrementaldecoder("utf-8")("strict")
         opened = cast(_ZipEntryReader, archive).open(info, "r")
@@ -169,16 +222,16 @@ def _read_text(
         validator.decode(b"", final=True)
         decoder = codecs.getincrementaldecoder("utf-8")("strict")
         text = decoder.decode(bytes(content), final=info.file_size <= amount)
-    except ScanError:
-        raise
-    except Exception as exc:
-        raise ScanError(
-            ErrorCode.ZIP_ENTRY_READ_FAILED,
-            "ZIP 文本条目读取失败",
-            package_name=package.display_name,
-            entry_path=path,
-        ) from exc
-    return TextEntry(path, text, info.file_size, len(content))
+    except Exception:
+        pass
+    else:
+        return TextEntry(path, text, info.file_size, len(content))
+    raise ScanError(
+        ErrorCode.ZIP_ENTRY_READ_FAILED,
+        "ZIP 文本条目读取失败",
+        package_name=package.display_name,
+        entry_path=path,
+    )
 
 
 def _extension(path: str) -> str:

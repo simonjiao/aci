@@ -53,19 +53,22 @@ InspectionPolicy
 
 配置缺失时 Module 返回 <code>ERROR</code>，不得自行采用推测值。请求参数不能覆盖这些配置。
 
-### 2.4 明确不在范围内
+### 2.4 能力覆盖
 
-- RAR、目录和单个 <code>SKILL.md</code> 输入。
-- 上传临时区、对象存储、数据库、入库、发布、版本管理和审批流程。
-- 写回输入文件、保存输出文件或自动应用修改结果；修改后的 ZIP 只随响应返回。
-- 加密 ZIP、符号链接、硬链接、设备文件和嵌套压缩包的新增拒绝规则。
-- Unicode 等价路径和大小写折叠冲突的新增拒绝规则。
-- SVG XML 解析；来源规则规定 SVG 当前不做魔数校验，默认通过。
-- YAML 重复键、不安全类型、Markdown 正文非空和本地引用存在性的新增阻断。
-- 将包检查的 64KB 样本规则扩展为全文扫描。
-- AST、代码围栏语义、上下文豁免或语义补漏。
-- 恶意文件、YARA、杀毒、大模型、SBOM、CVE、签名、内容合规和动态沙箱扫描。
-- 自动放行、误报豁免和例外审批。
+| 能力 | 状态 | 最终行为 |
+|---|---|---|
+| ZIP 结构、路径、大小、类型和元数据检查 | <code>SUPPORTED</code> | 执行附录 A 中可确定的来源规则。 |
+| Skill 建设规范与安全检查 | <code>PARTIAL</code> | 只执行附录 B、C 明确且可确定的部分。 |
+| 建议与修改后 ZIP | <code>SUPPORTED</code> | 由 <code>responseMode</code> 控制；原 ZIP 保持不变。 |
+| 缺少确定方法的来源要求 | <code>NOT_EVALUATED</code> | 包括描述和正文质量、SQLi/XSS 数据流、依赖范围、内容合规、知识产权及已知恶意 IP/URL。 |
+| RAR、目录和单个 <code>SKILL.md</code> 输入 | <code>NOT_PROVIDED</code> | Interface 只接受 Skill ZIP。 |
+| 附加包强化 | <code>NOT_PROVIDED</code> | 不增加针对加密或嵌套 ZIP、链接、设备文件、Unicode 或大小写冲突、SVG XML、YAML 严格性及本地引用的拒绝规则。 |
+| 全文与语义分析 | <code>NOT_PROVIDED</code> | 不把 64KB 样本扩展为全文，也不增加 AST、代码围栏语义、上下文豁免或语义补漏。 |
+| 扩展安全分析 | <code>NOT_PROVIDED</code> | 不执行恶意文件、YARA、杀毒、大模型、SBOM、CVE、签名或动态沙箱扫描。 |
+| Skill 生命周期管理 | <code>NOT_PROVIDED</code> | 不提供上传、存储、数据库、入库、发布、版本管理或写回操作。 |
+| 规则例外管理 | <code>NOT_PROVIDED</code> | 不提供自动放行、误报豁免或例外审批。 |
+
+<code>SUPPORTED</code> 表示 Interface 提供；<code>PARTIAL</code> 表示只覆盖来源中可确定的部分；<code>NOT_EVALUATED</code> 表示识别要求但不给出可靠判断；<code>NOT_PROVIDED</code> 表示本 Tool 没有该行为。
 
 ## 3. 质量保证 Module 与 MCP Adapter
 

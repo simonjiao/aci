@@ -1,0 +1,2607 @@
+{
+  "schemaVersion": "1.0",
+  "ruleVersion": "2026.08.20.1",
+  "sourceVersion": "0720扫描规则说明.docx",
+  "defaultSkipDirectories": [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "node_modules"
+  ],
+  "textExtensions": [
+    "md",
+    "txt",
+    "json",
+    "yml",
+    "yaml",
+    "js",
+    "ts",
+    "py",
+    "java",
+    "xml",
+    "html",
+    "css",
+    "sh",
+    "rst",
+    "adoc"
+  ],
+  "vocabularies": {
+    "base64MaliciousKeywords": [
+      "exec",
+      "eval",
+      "import",
+      "subprocess",
+      "os.system",
+      "curl",
+      "wget",
+      "bash",
+      "socket"
+    ],
+    "suspiciousNpmKeywords": [
+      "malicious",
+      "evil",
+      "suspicious",
+      "exploit",
+      "payload",
+      "backdoor",
+      "hack",
+      "inject",
+      "trojan",
+      "virus",
+      "ransom",
+      "steal",
+      "leak",
+      "drop",
+      "crack",
+      "rootkit",
+      "botnet"
+    ],
+    "suspiciousPipKeywords": [
+      "malicious",
+      "evil",
+      "suspicious",
+      "exploit",
+      "payload",
+      "backdoor",
+      "hack",
+      "inject",
+      "trojan",
+      "ransom"
+    ],
+    "suspiciousDockerKeywords": [
+      "malicious",
+      "evil",
+      "suspicious",
+      "exploit",
+      "payload",
+      "backdoor",
+      "hack",
+      "inject",
+      "trojan",
+      "virus",
+      "ransom"
+    ],
+    "suspiciousGemKeywords": [
+      "malicious",
+      "evil",
+      "suspicious",
+      "exploit",
+      "payload",
+      "backdoor"
+    ],
+    "lifecycleHooks": [
+      "preinstall",
+      "install",
+      "postinstall",
+      "prepublish",
+      "prepare",
+      "prebuild",
+      "postbuild"
+    ],
+    "lifecycleSuspiciousCommands": [
+      "curl",
+      "wget",
+      "bash",
+      "sh",
+      "python",
+      "node -e",
+      "eval",
+      "powershell",
+      "cmd",
+      "/tmp/",
+      "$env"
+    ],
+    "iocSuspiciousTlds": [
+      ".xyz",
+      ".top",
+      ".club",
+      ".work",
+      ".online",
+      ".site",
+      ".biz",
+      ".info",
+      ".ru",
+      ".su",
+      ".to",
+      ".cc",
+      ".tk",
+      ".ml",
+      ".ga",
+      ".cf",
+      ".gq",
+      ".pw",
+      ".ws",
+      ".onion",
+      ".zip",
+      ".mov"
+    ],
+    "executableExtensions": [
+      ".exe",
+      ".msi",
+      ".bat",
+      ".cmd",
+      ".ps1",
+      ".sh",
+      ".bash",
+      ".zsh",
+      ".js",
+      ".vbs",
+      ".jar",
+      ".dll",
+      ".so",
+      ".dylib",
+      ".bin"
+    ],
+    "iocMaliciousKeywords": [
+      "malicious",
+      "evil",
+      "suspicious",
+      "phishing",
+      "malware",
+      "attack",
+      "exploit",
+      "payload",
+      "hacker",
+      "hack",
+      "backdoor",
+      "ransom",
+      "steal",
+      "inject",
+      "trojan",
+      "virus",
+      "botnet",
+      "exfil",
+      "dropship",
+      "darkweb",
+      "leak",
+      "dumped",
+      "crack"
+    ]
+  },
+  "rules": [
+    {
+      "id": "SEC-SECRET-01",
+      "detector": "SecretsDetector",
+      "name": "AWS 访问密钥",
+      "sourceDescription": "匹配 AKIA 开头的 20 位密钥",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "prefixed_token",
+        "prefixes": [
+          "AKIA"
+        ],
+        "minimumLength": 20,
+        "maximumLength": 20,
+        "alphabet": "upper_alnum"
+      },
+      "evidence": {
+        "type": "secret",
+        "prefixLength": 4
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SECRET-02",
+      "detector": "SecretsDetector",
+      "name": "AWS 凭证",
+      "sourceDescription": "匹配 aws_access_key_id、aws_secret_access_key 配置",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "field_value",
+        "fields": [
+          "aws_access_key_id",
+          "aws_secret_access_key"
+        ],
+        "separators": [
+          "=",
+          ":"
+        ],
+        "minimumValueLength": 1,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "secret",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SECRET-03",
+      "detector": "SecretsDetector",
+      "name": "私钥",
+      "sourceDescription": "匹配 -----BEGIN (RSA |DSA |EC |OPENSSH )?PRIVATE KEY-----",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "private_key_header",
+        "keyTypes": [
+          "GENERIC",
+          "RSA",
+          "DSA",
+          "EC",
+          "OPENSSH"
+        ]
+      },
+      "evidence": {
+        "type": "private_key",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SECRET-04",
+      "detector": "SecretsDetector",
+      "name": "OpenAI API 密钥",
+      "sourceDescription": "匹配 sk- 开头的密钥",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "prefixed_token",
+        "prefixes": [
+          "sk-"
+        ],
+        "minimumLength": 4,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "secret",
+        "prefixLength": 3
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未定义密钥总长度。"
+      ]
+    },
+    {
+      "id": "SEC-SECRET-05",
+      "detector": "SecretsDetector",
+      "name": "GitHub Token",
+      "sourceDescription": "匹配 ghp_、gho_、github_pat_ 开头的 Token",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "prefixed_token",
+        "prefixes": [
+          "ghp_",
+          "gho_",
+          "github_pat_"
+        ],
+        "minimumLength": 5,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "token",
+        "prefixLength": 4
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未定义 Token 总长度。"
+      ]
+    },
+    {
+      "id": "SEC-SECRET-06",
+      "detector": "SecretsDetector",
+      "name": "Slack Token",
+      "sourceDescription": "匹配 xox[baprs]- 开头的 Token",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "prefixed_token",
+        "prefixes": [
+          "xoxb-",
+          "xoxa-",
+          "xoxp-",
+          "xoxr-",
+          "xoxs-"
+        ],
+        "minimumLength": 6,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "token",
+        "prefixLength": 4
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未定义 Token 总长度。"
+      ]
+    },
+    {
+      "id": "SEC-SECRET-07",
+      "detector": "SecretsDetector",
+      "name": "API 密钥/密钥",
+      "sourceDescription": "匹配 api_key、secret_key、access_token、auth_token 等字段后跟 20 位以上字符串",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "field_value",
+        "fields": [
+          "api_key",
+          "secret_key",
+          "access_token",
+          "auth_token"
+        ],
+        "separators": [
+          "=",
+          ":"
+        ],
+        "minimumValueLength": 20,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "secret",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源中的“等字段”未给出完整字段表；仅执行明确列出的字段。"
+      ]
+    },
+    {
+      "id": "SEC-SECRET-08",
+      "detector": "SecretsDetector",
+      "name": "硬编码密码",
+      "sourceDescription": "匹配 password= 后跟 8 位以上字符串",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "field_value",
+        "fields": [
+          "password"
+        ],
+        "separators": [
+          "="
+        ],
+        "minimumValueLength": 8,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "secret",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SECRET-09",
+      "detector": "SecretsDetector",
+      "name": "硬编码用户名",
+      "sourceDescription": "匹配 username、user、login 等字段后跟 4 位以上字符串",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "field_value",
+        "fields": [
+          "username",
+          "user",
+          "login"
+        ],
+        "separators": [
+          "=",
+          ":",
+          "|"
+        ],
+        "minimumValueLength": 4,
+        "alphabet": "token"
+      },
+      "evidence": {
+        "type": "username",
+        "prefixLength": 2
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源中的“等字段”未给出完整字段表；仅执行明确列出的字段。"
+      ]
+    },
+    {
+      "id": "SEC-INJECT-01",
+      "detector": "InjectionDetector",
+      "name": "eval() 动态执行",
+      "sourceDescription": "eval() 参数非字面量字符串",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "nonliteral_call",
+        "functions": [
+          "eval"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-02",
+      "detector": "InjectionDetector",
+      "name": "exec() 动态执行",
+      "sourceDescription": "exec() 参数非字面量字符串",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "nonliteral_call",
+        "functions": [
+          "exec"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-03",
+      "detector": "InjectionDetector",
+      "name": "__import__ 动态导入",
+      "sourceDescription": "使用 __import__() 函数",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "__import__"
+        ],
+        "bareOnly": true
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-04",
+      "detector": "InjectionDetector",
+      "name": "compile() 编译",
+      "sourceDescription": "使用 compile() 函数",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "compile"
+        ],
+        "bareOnly": true
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-05",
+      "detector": "InjectionDetector",
+      "name": "os.system() 调用",
+      "sourceDescription": "使用 os.system() 执行系统命令",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "os.system"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-06",
+      "detector": "InjectionDetector",
+      "name": "os.popen() 调用",
+      "sourceDescription": "使用 os.popen() 执行系统命令",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "os.popen"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-07",
+      "detector": "InjectionDetector",
+      "name": "subprocess shell=True",
+      "sourceDescription": "subprocess 调用时设置 shell=True",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "subprocess_shell_true"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-INJECT-08",
+      "detector": "InjectionDetector",
+      "name": "execfile() 调用",
+      "sourceDescription": "Python 2 的 execfile()（已废弃）",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "execfile"
+        ],
+        "bareOnly": true
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-B64-01",
+      "detector": "Base64Detector",
+      "name": "可疑 Base64 解码",
+      "sourceDescription": "长度 ≥50 的 Base64 字符串，解码后含明确列出的可疑关键词",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "base64_class",
+        "classification": "suspicious_text",
+        "minimumLength": 50,
+        "maliciousVocabulary": "base64MaliciousKeywords",
+        "skipLinePrefixes": [
+          "data:image/"
+        ],
+        "skipBasenames": [
+          "package-lock.json",
+          "yarn.lock",
+          "pnpm-lock.yaml"
+        ],
+        "skipFieldNames": [
+          "integrity",
+          "sha256",
+          "sha512",
+          "sha384"
+        ]
+      },
+      "evidence": {
+        "type": "base64",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-B64-02",
+      "detector": "Base64Detector",
+      "name": "普通 Base64 编码",
+      "sourceDescription": "长度 ≥50 的 Base64 字符串，解码内容无明显恶意",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "base64_class",
+        "classification": "plain_text",
+        "minimumLength": 50,
+        "maliciousVocabulary": "base64MaliciousKeywords",
+        "skipLinePrefixes": [
+          "data:image/"
+        ],
+        "skipBasenames": [
+          "package-lock.json",
+          "yarn.lock",
+          "pnpm-lock.yaml"
+        ],
+        "skipFieldNames": [
+          "integrity",
+          "sha256",
+          "sha512",
+          "sha384"
+        ]
+      },
+      "evidence": {
+        "type": "base64",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-B64-03",
+      "detector": "Base64Detector",
+      "name": "二进制 Base64",
+      "sourceDescription": "Base64 解码为非 UTF-8 内容（可能是二进制数据）",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "base64_class",
+        "classification": "binary",
+        "minimumLength": 50,
+        "maliciousVocabulary": "base64MaliciousKeywords",
+        "skipLinePrefixes": [
+          "data:image/"
+        ],
+        "skipBasenames": [
+          "package-lock.json",
+          "yarn.lock",
+          "pnpm-lock.yaml"
+        ],
+        "skipFieldNames": [
+          "integrity",
+          "sha256",
+          "sha512",
+          "sha384"
+        ]
+      },
+      "evidence": {
+        "type": "base64",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-01",
+      "detector": "ObfuscationDetector",
+      "name": "eval/exec 动态执行",
+      "sourceDescription": "参数非字面量的 eval() / exec()",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "nonliteral_call",
+        "functions": [
+          "eval",
+          "exec"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-02",
+      "detector": "ObfuscationDetector",
+      "name": "Hex 编码序列",
+      "sourceDescription": "连续 5 个以上 \\xXX 转义字符",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "hex_escape_run",
+        "minimumCount": 5
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-03",
+      "detector": "ObfuscationDetector",
+      "name": "chr() 链式拼接",
+      "sourceDescription": "3 个以上 chr() 函数拼接",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "chr_chain",
+        "minimumCount": 3
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-04",
+      "detector": "ObfuscationDetector",
+      "name": "Python 字符串反转",
+      "sourceDescription": "使用切片 [::-1] 反转字符串",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "slice_reverse"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-05",
+      "detector": "ObfuscationDetector",
+      "name": "JS 字符串反转",
+      "sourceDescription": ".split().reverse().join() 模式",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "js_reverse"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-06",
+      "detector": "ObfuscationDetector",
+      "name": "String.fromCharCode",
+      "sourceDescription": "多参数的 String.fromCharCode()",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "from_char_code",
+        "minimumArguments": 2
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-OBF-07",
+      "detector": "ObfuscationDetector",
+      "name": "atob() 解码",
+      "sourceDescription": "对长字符串调用 atob()",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "atob_long",
+        "minimumLength": 50
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源没有定义“长字符串”的数值阈值；规则参数采用与 Base64 检测一致的 50 字符。"
+      ]
+    },
+    {
+      "id": "SEC-HIDDEN-01",
+      "detector": "HiddenCharDetector",
+      "name": "零宽字符",
+      "sourceDescription": "检测明确列出的零宽字符",
+      "severity": "LOW",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "hidden_characters",
+        "codePoints": [
+          "200B",
+          "200C",
+          "200D",
+          "2060",
+          "FEFF",
+          "2063",
+          "00AD"
+        ]
+      },
+      "evidence": {
+        "type": "hidden",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-HIDDEN-02",
+      "detector": "HiddenCharDetector",
+      "name": "Unicode 转义零宽字符",
+      "sourceDescription": "检测源码中明确列出的零宽字符转义序列",
+      "severity": "LOW",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "unicode_escape",
+        "escapes": [
+          "\\u200b",
+          "\\u200c",
+          "\\u200d",
+          "\\u2060",
+          "\\ufeff",
+          "\\u2063",
+          "\\u00ad"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-HIDDEN-03",
+      "detector": "HiddenCharDetector",
+      "name": "双向控制字符",
+      "sourceDescription": "检测 U+202A-U+202E、U+2066-U+2069、U+200E、U+200F",
+      "severity": "LOW",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "hidden_characters",
+        "codePoints": [
+          "202A",
+          "202B",
+          "202C",
+          "202D",
+          "202E",
+          "2066",
+          "2067",
+          "2068",
+          "2069",
+          "200E",
+          "200F"
+        ]
+      },
+      "evidence": {
+        "type": "hidden",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-ENTROPY-01",
+      "detector": "EntropyDetector",
+      "name": "高熵文本行",
+      "sourceDescription": "行长度 ≥100；Shannon 熵 >5.5，中文或 Markdown >6.5",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "entropy",
+        "minimumLength": 100,
+        "threshold": 5.5,
+        "elevatedThreshold": 6.5,
+        "elevatedExtensions": [
+          "md"
+        ],
+        "commentPrefixes": [
+          "//",
+          "#",
+          "/*",
+          "*"
+        ],
+        "dataPrefix": "data:",
+        "skipBasenames": [
+          "package-lock.json",
+          "yarn.lock",
+          "pnpm-lock.yaml",
+          "Cargo.lock",
+          "Gemfile.lock",
+          "poetry.lock"
+        ]
+      },
+      "evidence": {
+        "type": "entropy",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-01",
+      "detector": "DownloadExecDetector",
+      "name": "curl 管道到 shell",
+      "sourceDescription": "curl ... | bash 或 curl ... | sh",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "curl",
+          "|",
+          "sh"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-02",
+      "detector": "DownloadExecDetector",
+      "name": "wget 管道到 shell",
+      "sourceDescription": "wget ... | bash 或 wget ... | sh",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "wget",
+          "|",
+          "sh"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-03",
+      "detector": "DownloadExecDetector",
+      "name": "curl 下载后执行",
+      "sourceDescription": "curl -o ... && bash",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "curl",
+          "-o",
+          "&&",
+          "bash"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-04",
+      "detector": "DownloadExecDetector",
+      "name": "wget 下载后执行",
+      "sourceDescription": "wget -O ... && bash",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "wget",
+          "-O",
+          "&&",
+          "bash"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-05",
+      "detector": "DownloadExecDetector",
+      "name": "curl 管道到 Python",
+      "sourceDescription": "curl ... | python",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "curl",
+          "|",
+          "python"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-06",
+      "detector": "DownloadExecDetector",
+      "name": "wget 管道到 Python",
+      "sourceDescription": "wget ... | python",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "wget",
+          "|",
+          "python"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-07",
+      "detector": "DownloadExecDetector",
+      "name": "JS fetch + eval",
+      "sourceDescription": "fetch() 返回值配合 eval()",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "file_groups",
+        "groups": [
+          [
+            "fetch("
+          ],
+          [
+            "eval("
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-08",
+      "detector": "DownloadExecDetector",
+      "name": "Python urllib + exec",
+      "sourceDescription": "urlopen() 返回值配合 exec()",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "file_groups",
+        "groups": [
+          [
+            "urlopen("
+          ],
+          [
+            "exec("
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-DOWNLOAD-09",
+      "detector": "DownloadExecDetector",
+      "name": "Python requests + exec",
+      "sourceDescription": "requests.get() 返回值配合 exec()",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "file_groups",
+        "groups": [
+          [
+            "requests.get("
+          ],
+          [
+            "exec("
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-01",
+      "detector": "CredentialTheftDetector",
+      "name": "macOS 密码对话框",
+      "sourceDescription": "osascript display dialog password",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "osascript display dialog password"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-02",
+      "detector": "CredentialTheftDetector",
+      "name": "macOS 隐藏输入对话框",
+      "sourceDescription": "osascript display dialog hidden answer",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "osascript display dialog hidden answer"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-03",
+      "detector": "CredentialTheftDetector",
+      "name": "Keychain 密码提取",
+      "sourceDescription": "security find-generic-password / security find-internet-password",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "security find-generic-password",
+          "security find-internet-password"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-04",
+      "detector": "CredentialTheftDetector",
+      "name": "Keychain 导出",
+      "sourceDescription": "security dump-keychain",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "security dump-keychain"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-05",
+      "detector": "CredentialTheftDetector",
+      "name": "SSH 私钥读取",
+      "sourceDescription": "读取 .ssh/id_rsa、.ssh/id_ed25519、.ssh/id_ecdsa",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          ".ssh/id_rsa",
+          ".ssh/id_ed25519",
+          ".ssh/id_ecdsa"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-06",
+      "detector": "CredentialTheftDetector",
+      "name": "SSH 私钥访问",
+      "sourceDescription": "访问 .ssh/id_ 开头的文件",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          ".ssh/id_"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-07",
+      "detector": "CredentialTheftDetector",
+      "name": "凭证文件读取",
+      "sourceDescription": "读取 .env、.npmrc、.pypirc、.netrc",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          ".env",
+          ".npmrc",
+          ".pypirc",
+          ".netrc"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-08",
+      "detector": "CredentialTheftDetector",
+      "name": "AWS 凭证文件",
+      "sourceDescription": "访问 .aws/credentials",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          ".aws/credentials"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-CRED-09",
+      "detector": "CredentialTheftDetector",
+      "name": "浏览器凭证访问",
+      "sourceDescription": "访问 Cookies.binarycookies、Login Data、cookies.sqlite",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "Cookies.binarycookies",
+          "Login Data",
+          "cookies.sqlite"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-EXFIL-01",
+      "detector": "ExfiltrationDetector",
+      "name": "ZIP 压缩 + 上传",
+      "sourceDescription": "同时检测到压缩和网络上传",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "package",
+      "match": {
+        "type": "package_groups",
+        "groups": [
+          [
+            "zipfile",
+            "ZipFile",
+            "make_archive"
+          ],
+          [
+            "requests.post",
+            "requests.put",
+            "urllib.request.urlopen",
+            "urllib.request.Request",
+            "http.client",
+            "fetch(",
+            ".upload"
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-EXFIL-02",
+      "detector": "ExfiltrationDetector",
+      "name": "递归文件枚举敏感目录",
+      "sourceDescription": "glob.glob/glob.iglob 枚举 /home、~、**",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_groups",
+        "groups": [
+          [
+            "glob.glob",
+            "glob.iglob"
+          ],
+          [
+            "/home",
+            "~",
+            "**"
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-EXFIL-03",
+      "detector": "ExfiltrationDetector",
+      "name": "敏感目录访问 + 上传",
+      "sourceDescription": "同时存在敏感目录访问和网络上传能力",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "package",
+      "match": {
+        "type": "package_groups",
+        "groups": [
+          [
+            ".ssh",
+            ".aws",
+            ".gnupg",
+            ".kube",
+            ".config/gcloud",
+            ".npmrc",
+            ".pypirc"
+          ],
+          [
+            "requests.post",
+            "requests.put",
+            "urllib.request.urlopen",
+            "urllib.request.Request",
+            "http.client",
+            "fetch(",
+            ".upload"
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-01",
+      "detector": "PersistenceDetector",
+      "name": "crontab 修改",
+      "sourceDescription": "crontab -e、crontab -l 等操作",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "crontab -e",
+          "crontab -l"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源中的“等操作”未给出完整操作列表；仅执行明确列出的操作。"
+      ]
+    },
+    {
+      "id": "SEC-PERSIST-02",
+      "detector": "PersistenceDetector",
+      "name": "Cron 任务安装",
+      "sourceDescription": "写入 crontab 或 /etc/cron.d/ 目录",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "crontab",
+          "/etc/cron.d/"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未给出“写入”的语法边界；按明确对象的出现进行复核提示。"
+      ]
+    },
+    {
+      "id": "SEC-PERSIST-03",
+      "detector": "PersistenceDetector",
+      "name": "macOS LaunchAgents/Daemons",
+      "sourceDescription": "引用 LaunchAgents、LaunchDaemons、.plist",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "LaunchAgents",
+          "LaunchDaemons",
+          ".plist"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-04",
+      "detector": "PersistenceDetector",
+      "name": "macOS launchctl 加载",
+      "sourceDescription": "launchctl load 或 launchctl bootstrap",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "launchctl load",
+          "launchctl bootstrap"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-05",
+      "detector": "PersistenceDetector",
+      "name": "systemd 服务启用",
+      "sourceDescription": "systemctl enable 或 systemctl start",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "systemctl enable",
+          "systemctl start"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-06",
+      "detector": "PersistenceDetector",
+      "name": "systemd 服务文件创建",
+      "sourceDescription": "创建 /etc/systemd/system/*.service",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_groups",
+        "groups": [
+          [
+            "/etc/systemd/system/"
+          ],
+          [
+            ".service"
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-07",
+      "detector": "PersistenceDetector",
+      "name": "Windows 注册表启动项",
+      "sourceDescription": "访问 HKEY_...\\Run 或 CurrentVersion\\Run",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_groups",
+        "groups": [
+          [
+            "HKEY_",
+            "CurrentVersion"
+          ],
+          [
+            "\\Run"
+          ]
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-PERSIST-08",
+      "detector": "PersistenceDetector",
+      "name": "Shell 配置文件写入",
+      "sourceDescription": "写入 .bashrc、.zshrc、.profile、.bash_profile",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          ".bashrc",
+          ".zshrc",
+          ".profile",
+          ".bash_profile"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未给出“写入”的语法边界；按明确文件名的出现进行复核提示。"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-01",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "sudo 调用",
+      "sourceDescription": "使用 sudo 命令",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "command_token",
+        "terms": [
+          "sudo"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-02",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "chmod 777",
+      "sourceDescription": "设置世界可读写执行权限",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "chmod",
+          "777"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-03",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "chmod +s",
+      "sourceDescription": "设置 SUID/SGID 位",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "chmod",
+          "+s"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-04",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "chmod 含 SUID 位",
+      "sourceDescription": "权限模式中包含 SUID（4xxx）或 SGID（2xxx）",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "chmod_suid_mode"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-05",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "chown root",
+      "sourceDescription": "将文件所有者改为 root",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "chown",
+          "root"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-06",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "Python setuid/setgid",
+      "sourceDescription": "使用 os.setuid() 或 os.setgid()",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "os.setuid",
+          "os.setgid"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-PRIV-07",
+      "detector": "PrivilegeEscalationDetector",
+      "name": "macOS 管理员组修改",
+      "sourceDescription": "dscl -append /Groups/admin",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "line_sequence",
+        "segments": [
+          "dscl",
+          "-append",
+          "/Groups/admin"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [],
+      "skipExtensions": [
+        ".md",
+        ".txt",
+        ".rst",
+        ".adoc"
+      ]
+    },
+    {
+      "id": "SEC-SOCIAL-01",
+      "detector": "SocialEngineeringDetector",
+      "name": "双重扩展名文件",
+      "sourceDescription": "文件名包含双重扩展名",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "filename",
+      "match": {
+        "type": "filename_double_extension",
+        "executableVocabulary": "executableExtensions"
+      },
+      "evidence": {
+        "type": "filename",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SOCIAL-02",
+      "detector": "SocialEngineeringDetector",
+      "name": "诱饵文件名关键词",
+      "sourceDescription": "文件名包含明确列出的诱饵关键词",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "filename",
+      "match": {
+        "type": "filename_keywords",
+        "terms": [
+          "wallet",
+          "airdrop",
+          "claim",
+          "reward",
+          "metamask",
+          "seed",
+          "recovery",
+          "invoice",
+          "urgent",
+          "important",
+          "password",
+          "credentials",
+          "secret",
+          "private-key"
+        ]
+      },
+      "evidence": {
+        "type": "filename",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SOCIAL-03",
+      "detector": "SocialEngineeringDetector",
+      "name": "钓鱼 URL",
+      "sourceDescription": "URL 包含明确列出的钓鱼关键词",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "url_keywords",
+        "terms": [
+          "secure-login",
+          "verify",
+          "signin",
+          "login",
+          "account",
+          "recover",
+          "restore",
+          "confirm",
+          "update",
+          "validate",
+          "check",
+          "auth",
+          "reset-password",
+          "unlock"
+        ]
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SOCIAL-04",
+      "detector": "SocialEngineeringDetector",
+      "name": "假冒技术支持",
+      "sourceDescription": "内容包含明确列出的技术支持和紧急提示模式",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "support_content",
+        "terms": [
+          "Microsoft Support",
+          "Apple Support",
+          "Google Support",
+          "tech support",
+          "customer support",
+          "help desk",
+          "IT support",
+          "please call",
+          "toll free",
+          "1-800",
+          "1-888",
+          "urgent",
+          "security alert",
+          "security notice",
+          "security update",
+          "your account has been suspended",
+          "your account has been locked",
+          "verify your identity",
+          "click here to"
+        ],
+        "phonePattern": true
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SOCIAL-05",
+      "detector": "SocialEngineeringDetector",
+      "name": "Crypto/Wallet 钓鱼",
+      "sourceDescription": "内容包含明确列出的 Crypto/Wallet 钓鱼模式",
+      "severity": "LOW",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "crypto-wallet",
+          "airdrop",
+          "free-token",
+          "security-update",
+          "urgent-fix",
+          "claim-reward",
+          "bonus-token",
+          "wallet-connect",
+          "seed-phrase",
+          "private-key-recovery",
+          "metamask-fix",
+          "connect wallet",
+          "claim your",
+          "free crypto",
+          "free token",
+          "free coin",
+          "win bitcoin",
+          "win ethereum",
+          "win crypto",
+          "limited time offer",
+          "exclusive airdrop"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-01",
+      "detector": "NetworkDetector",
+      "name": "Python socket",
+      "sourceDescription": "使用 socket.socket()、socket.connect()、socket.create_connection()",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "socket.socket",
+          "socket.connect",
+          "socket.create_connection"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-02",
+      "detector": "NetworkDetector",
+      "name": "Python http.client",
+      "sourceDescription": "使用 HTTPConnection、HTTPSConnection",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "HTTPConnection",
+          "HTTPSConnection"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-03",
+      "detector": "NetworkDetector",
+      "name": "Python urllib",
+      "sourceDescription": "使用 urllib.request.urlopen()、urllib.request.Request()",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "urllib.request.urlopen",
+          "urllib.request.Request"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-04",
+      "detector": "NetworkDetector",
+      "name": "Python requests",
+      "sourceDescription": "使用 requests.get/post/put/delete/patch/head()",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "requests.get",
+          "requests.post",
+          "requests.put",
+          "requests.delete",
+          "requests.patch",
+          "requests.head"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-05",
+      "detector": "NetworkDetector",
+      "name": "JavaScript fetch",
+      "sourceDescription": "使用 fetch() 调用",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "fetch"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-06",
+      "detector": "NetworkDetector",
+      "name": "XMLHttpRequest",
+      "sourceDescription": "使用 XMLHttpRequest 对象",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "XMLHttpRequest"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-07",
+      "detector": "NetworkDetector",
+      "name": "axios HTTP 调用",
+      "sourceDescription": "使用 axios.get/post/put/delete/patch()",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "function_call",
+        "functions": [
+          "axios.get",
+          "axios.post",
+          "axios.put",
+          "axios.delete",
+          "axios.patch"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-08",
+      "detector": "NetworkDetector",
+      "name": "curl 命令",
+      "sourceDescription": "使用 curl 命令",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "command_token",
+        "terms": [
+          "curl"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-09",
+      "detector": "NetworkDetector",
+      "name": "wget 命令",
+      "sourceDescription": "使用 wget 命令",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "command_token",
+        "terms": [
+          "wget"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-NET-10",
+      "detector": "NetworkDetector",
+      "name": "Node.js net 模块",
+      "sourceDescription": "使用 net.createConnection() 或 require('net')",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "literal_any",
+        "terms": [
+          "net.createConnection(",
+          "require('net')",
+          "require(\"net\")"
+        ]
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-01",
+      "detector": "SupplyChainDetector",
+      "name": "可疑 npm 包安装",
+      "sourceDescription": "npm install 安装包名含明确列出的可疑关键词",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "package_command_keyword",
+        "command": "npm",
+        "actions": [
+          "install"
+        ],
+        "keywordVocabulary": "suspiciousNpmKeywords",
+        "includePackageJsonName": true
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-02",
+      "detector": "SupplyChainDetector",
+      "name": "可疑 pip 包安装",
+      "sourceDescription": "pip install/download 安装包名含明确列出的可疑关键词",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "package_command_keyword",
+        "command": "pip",
+        "actions": [
+          "install",
+          "download"
+        ],
+        "keywordVocabulary": "suspiciousPipKeywords",
+        "includePackageJsonName": false
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-03",
+      "detector": "SupplyChainDetector",
+      "name": "可疑 Docker 镜像拉取",
+      "sourceDescription": "docker pull 镜像名含明确列出的可疑关键词",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "package_command_keyword",
+        "command": "docker",
+        "actions": [
+          "pull"
+        ],
+        "keywordVocabulary": "suspiciousDockerKeywords",
+        "includePackageJsonName": false
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-04",
+      "detector": "SupplyChainDetector",
+      "name": "非官方 Docker 镜像",
+      "sourceDescription": "docker pull 从非官方域名/私有仓库拉取镜像",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "docker_nonofficial"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未给出官方仓库完整清单；规则仅将显式非 docker.io 注册表前缀标为需复核。"
+      ]
+    },
+    {
+      "id": "SEC-SUPPLY-05",
+      "detector": "SupplyChainDetector",
+      "name": "pip 额外索引 URL",
+      "sourceDescription": "pip install 使用 --extra-index-url 或 --index-url",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "pip_index"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-06",
+      "detector": "SupplyChainDetector",
+      "name": "可疑 gem 安装",
+      "sourceDescription": "gem install 包名含明确列出的可疑关键词",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "package_command_keyword",
+        "command": "gem",
+        "actions": [
+          "install"
+        ],
+        "keywordVocabulary": "suspiciousGemKeywords",
+        "includePackageJsonName": false
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-07",
+      "detector": "SupplyChainDetector",
+      "name": "package.json 危险钩子",
+      "sourceDescription": "存在明确列出的生命周期钩子",
+      "severity": "HIGH/CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "package_json_hooks",
+        "hooksVocabulary": "lifecycleHooks",
+        "suspiciousVocabulary": "lifecycleSuspiciousCommands",
+        "mode": "hook_presence"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-08",
+      "detector": "SupplyChainDetector",
+      "name": "package.json 钩子含可疑命令",
+      "sourceDescription": "生命周期钩子内容含明确列出的可疑命令",
+      "severity": "CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "package_json_hooks",
+        "hooksVocabulary": "lifecycleHooks",
+        "suspiciousVocabulary": "lifecycleSuspiciousCommands",
+        "mode": "suspicious_command"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-SUPPLY-09",
+      "detector": "SupplyChainDetector",
+      "name": "setup.py 自定义命令",
+      "sourceDescription": "setup.py 中使用 cmdclass",
+      "severity": "HIGH/CRITICAL",
+      "status": "APPROVED",
+      "scope": "file",
+      "match": {
+        "type": "setup_cmdclass"
+      },
+      "evidence": {
+        "type": "command",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-IOC-01",
+      "detector": "IOCDetector",
+      "name": "可疑 TLD + 可执行下载",
+      "sourceDescription": "URL 域名含可疑 TLD 且指向可执行文件",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "url_ioc",
+        "condition": "suspicious_tld",
+        "requireExecutable": true,
+        "tldVocabulary": "iocSuspiciousTlds",
+        "keywordVocabulary": "iocMaliciousKeywords",
+        "executableVocabulary": "executableExtensions"
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-IOC-02",
+      "detector": "IOCDetector",
+      "name": "可疑 TLD",
+      "sourceDescription": "URL 域名含可疑 TLD",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "url_ioc",
+        "condition": "suspicious_tld",
+        "requireExecutable": false,
+        "tldVocabulary": "iocSuspiciousTlds",
+        "keywordVocabulary": "iocMaliciousKeywords",
+        "executableVocabulary": "executableExtensions"
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-IOC-03",
+      "detector": "IOCDetector",
+      "name": "恶意关键词 + 可执行下载",
+      "sourceDescription": "URL 域名含恶意关键词且指向可执行文件",
+      "severity": "HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "url_ioc",
+        "condition": "malicious_keyword",
+        "requireExecutable": true,
+        "tldVocabulary": "iocSuspiciousTlds",
+        "keywordVocabulary": "iocMaliciousKeywords",
+        "executableVocabulary": "executableExtensions"
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-IOC-04",
+      "detector": "IOCDetector",
+      "name": "恶意关键词域名",
+      "sourceDescription": "URL 域名含恶意关键词",
+      "severity": "MEDIUM",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "url_ioc",
+        "condition": "malicious_keyword",
+        "requireExecutable": false,
+        "tldVocabulary": "iocSuspiciousTlds",
+        "keywordVocabulary": "iocMaliciousKeywords",
+        "executableVocabulary": "executableExtensions"
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": []
+    },
+    {
+      "id": "SEC-IOC-05",
+      "detector": "IOCDetector",
+      "name": "独立域名含可疑 TLD",
+      "sourceDescription": "独立域名（非 URL 中）含可疑 TLD",
+      "severity": "MEDIUM/HIGH",
+      "status": "APPROVED",
+      "scope": "line",
+      "match": {
+        "type": "standalone_domain_tld",
+        "tldVocabulary": "iocSuspiciousTlds"
+      },
+      "evidence": {
+        "type": "indicator",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未定义独立域名的词法边界；合法成员访问可能命中。"
+      ]
+    },
+    {
+      "id": "SEC-IOC-06",
+      "detector": "IOCDetector",
+      "name": "已知恶意 IP（需外部数据库）",
+      "sourceDescription": "IP 地址匹配威胁情报数据库",
+      "severity": "CRITICAL",
+      "status": "UNSUPPORTED",
+      "scope": "line",
+      "match": {
+        "type": "external_intelligence"
+      },
+      "evidence": {
+        "type": "indicator",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未提供威胁情报数据源、版本和不可用行为。"
+      ]
+    },
+    {
+      "id": "SEC-IOC-07",
+      "detector": "IOCDetector",
+      "name": "已知恶意 URL（需外部数据库）",
+      "sourceDescription": "URL 匹配威胁情报数据库",
+      "severity": "CRITICAL",
+      "status": "UNSUPPORTED",
+      "scope": "line",
+      "match": {
+        "type": "external_intelligence"
+      },
+      "evidence": {
+        "type": "url",
+        "prefixLength": 0
+      },
+      "remediation": null,
+      "sourceLimitations": [
+        "来源未提供威胁情报数据源、版本和不可用行为。"
+      ]
+    }
+  ]
+}

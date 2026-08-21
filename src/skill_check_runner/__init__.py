@@ -8,6 +8,7 @@ from .models import (
     RunRequest,
     RunResult,
 )
+from .result_archive import write_result_archive
 from .runner import CheckAdapter, CheckRunner
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "RunnerErrorCode",
     "RunRequest",
     "RunResult",
+    "write_result_archive",
 ]

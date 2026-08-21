@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import csv
-import json
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from io import StringIO
-from pathlib import Path
-from typing import Annotated, Literal, cast
-
-from pydantic import BaseModel, ConfigDict, Field
+from typing import cast
 
 from skill_check_runner import (
     CheckResult,
@@ -17,20 +13,16 @@ from skill_check_runner import (
     RunConclusion,
     RunRequest,
 )
+from skill_check_runner.result_archive import encode_json
 from skill_security import (
     Conclusion,
     PackageInput,
     RuleSet,
-    ScanPolicy,
     ScanRequest,
     ScanResult,
     SecurityScan,
-    compile_rules,
 )
 
-from ..output import encode_json
-
-_JSON_LOADS = cast(Callable[[str], object], json.loads)
 _CSV_HEADERS = (
     "包名称",
     "风险等级",
@@ -53,59 +45,11 @@ _CSV_HEADERS = (
 )
 
 
-class SecurityPolicyConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    max_package_bytes: Annotated[int, Field(gt=0)]
-    max_entries_per_package: Annotated[int, Field(gt=0)]
-    max_text_bytes_per_file: Annotated[int, Field(gt=0)]
-    max_total_read_bytes: Annotated[int, Field(gt=0)]
-    max_findings: Annotated[int, Field(gt=0)]
-
-
-class SecurityConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    type: Literal["skill-security"]
-    rules_file: Annotated[str, Field(min_length=1)]
-    policy: SecurityPolicyConfig
-
-
-class SecurityAdapterConfigError(Exception):
-    pass
-
-
 @dataclass(frozen=True, slots=True)
 class SecurityAdapter:
     rules: RuleSet
     scanner: SecurityScan
     check_id: str = "security"
-
-    @classmethod
-    def from_config(cls, config: SecurityConfig, base_directory: Path) -> SecurityAdapter:
-        rules_path = Path(config.rules_file)
-        if not rules_path.is_absolute():
-            rules_path = base_directory / rules_path
-        adapter: SecurityAdapter | None = None
-        try:
-            raw = _JSON_LOADS(rules_path.read_text(encoding="utf-8"))
-            document = _string_mapping(raw)
-            if document is None:
-                raise ValueError
-            rules = compile_rules(document)
-            policy = ScanPolicy(
-                config.policy.max_package_bytes,
-                config.policy.max_entries_per_package,
-                config.policy.max_text_bytes_per_file,
-                config.policy.max_total_read_bytes,
-                config.policy.max_findings,
-            )
-            adapter = cls(rules, SecurityScan(policy))
-        except Exception:
-            pass
-        if adapter is None:
-            raise SecurityAdapterConfigError("安全检查配置无效")
-        return adapter
 
     def run(self, request: RunRequest) -> CheckResult:
         packages = tuple(_security_package(package) for package in request.packages)
@@ -207,12 +151,3 @@ def _metadata_document(result: ScanResult) -> dict[str, object]:
             "rule_sha256": result.rules.rule_sha256,
         },
     }
-
-
-def _string_mapping(value: object) -> Mapping[str, object] | None:
-    if not isinstance(value, Mapping):
-        return None
-    mapping = cast(Mapping[object, object], value)
-    if not all(isinstance(key, str) for key in mapping):
-        return None
-    return cast(Mapping[str, object], mapping)

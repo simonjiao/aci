@@ -24,6 +24,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 skill_security = ["py.typed"]
 skill_check_runner = ["py.typed"]
+skill_checks = ["py.typed"]
 cli = ["py.typed"]
 
 [tool.pytest.ini_options]

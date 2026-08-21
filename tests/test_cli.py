@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import tempfile
 import unittest
-from collections.abc import Callable, Mapping
-from contextlib import redirect_stderr
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import cast
@@ -16,11 +17,12 @@ from tests.support import list_field
 
 ROOT = Path(__file__).resolve().parents[1]
 _JSON_LOADS = cast(Callable[[str], object], json.loads)
+_CSV_READER = cast(Callable[[StringIO], Iterator[list[str]]], csv.reader)
 
 
-def write_skill(path: Path, content: str) -> None:
+def write_skill(path: Path, content: str, entry_name: str = "SKILL.md") -> None:
     with ZipFile(path, "w", ZIP_DEFLATED) as archive:
-        archive.writestr("SKILL.md", content)
+        archive.writestr(entry_name, content)
 
 
 def write_config(path: Path) -> None:
@@ -54,6 +56,15 @@ def json_object(raw: bytes) -> Mapping[str, object]:
     return cast(Mapping[str, object], mapping)
 
 
+def csv_table(raw: bytes) -> tuple[list[str], list[dict[str, str]]]:
+    rows = list(_CSV_READER(StringIO(raw.decode("utf-8-sig"))))
+    if not rows:
+        raise AssertionError("expected CSV header")
+    headers = rows[0]
+    records = [dict(zip(headers, row, strict=True)) for row in rows[1:]]
+    return headers, records
+
+
 class CliTests(unittest.TestCase):
     def test_check_writes_a_result_zip_without_modifying_the_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -65,38 +76,75 @@ class CliTests(unittest.TestCase):
             write_skill(package, "# Safe Skill\n")
             write_config(config)
             before = hashlib.sha256(package.read_bytes()).hexdigest()
+            stdout = StringIO()
 
-            exit_code = main(
-                (
-                    "check",
-                    "--config",
-                    str(config),
-                    "--output",
-                    str(output),
-                    str(package),
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    (
+                        "check",
+                        "--config",
+                        str(config),
+                        "--output",
+                        str(output),
+                        str(package),
+                    )
                 )
-            )
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                stdout.getvalue(),
+                f"检查完成：PASS。结果 ZIP：{output}\n",
+            )
             self.assertEqual(hashlib.sha256(package.read_bytes()).hexdigest(), before)
-            expected_names: list[str] = ["manifest.json", "security-scan.json"]
+            expected_names: list[str] = [
+                "manifest.json",
+                "security-scan.csv",
+                "security-metadata.json",
+            ]
             with ZipFile(output) as archive:
                 self.assertEqual(archive.namelist(), expected_names)
                 manifest = json_object(archive.read("manifest.json"))
-                security = json_object(archive.read("security-scan.json"))
+                csv_bytes = archive.read("security-scan.csv")
+                metadata = json_object(archive.read("security-metadata.json"))
+            headers, findings = csv_table(csv_bytes)
             self.assertEqual(manifest["conclusion"], "PASS")
-            self.assertEqual(security["conclusion"], "PASS")
+            self.assertEqual(metadata["conclusion"], "PASS")
+            self.assertEqual(len(list_field(metadata, "packages")), 1)
+            expected_headers: list[str] = [
+                "Finding ID",
+                "包名称",
+                "来源标识",
+                "包 SHA-256",
+                "规则 ID",
+                "检测项",
+                "规则描述",
+                "风险等级",
+                "包内路径",
+                "行号",
+                "列号",
+                "证据类型",
+                "脱敏证据",
+                "证据指纹",
+                "状态",
+                "修改建议",
+                "规则版本",
+                "规则 SHA-256",
+            ]
+            no_findings: list[dict[str, str]] = []
+            self.assertEqual(headers, expected_headers)
+            self.assertEqual(findings, no_findings)
 
-            second_exit = main(
-                (
-                    "check",
-                    "--config",
-                    str(config),
-                    "--output",
-                    str(second_output),
-                    str(package),
+            with redirect_stdout(StringIO()):
+                second_exit = main(
+                    (
+                        "check",
+                        "--config",
+                        str(config),
+                        "--output",
+                        str(second_output),
+                        str(package),
+                    )
                 )
-            )
             self.assertEqual(second_exit, 0)
             self.assertEqual(output.read_bytes(), second_output.read_bytes())
 
@@ -106,18 +154,32 @@ class CliTests(unittest.TestCase):
             package = root / "review.zip"
             config = root / "skillqa.toml"
             output = root / "result.zip"
-            write_skill(package, "eval(user_input)\n")
+            write_skill(package, "eval(user_input)\n", "\n=review.md")
             write_config(config)
+            stdout = StringIO()
 
-            exit_code = main(
-                ("check", "--config", str(config), "--output", str(output), str(package))
-            )
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    ("check", "--config", str(config), "--output", str(output), str(package))
+                )
 
             self.assertEqual(exit_code, 1)
+            self.assertEqual(
+                stdout.getvalue(),
+                f"检查完成：REVIEW_REQUIRED，请人工复核。结果 ZIP：{output}\n",
+            )
             with ZipFile(output) as archive:
-                security = json_object(archive.read("security-scan.json"))
-            self.assertEqual(security["conclusion"], "REVIEW_REQUIRED")
-            self.assertTrue(list_field(security, "findings"))
+                csv_bytes = archive.read("security-scan.csv")
+                metadata = json_object(archive.read("security-metadata.json"))
+            _, findings = csv_table(csv_bytes)
+            self.assertEqual(metadata["conclusion"], "REVIEW_REQUIRED")
+            self.assertTrue(findings)
+            self.assertTrue(
+                all(finding["状态"] == "REVIEW_REQUIRED" for finding in findings)
+            )
+            self.assertTrue(
+                all(finding["包内路径"] == "'\n=review.md" for finding in findings)
+            )
 
     def test_invalid_zip_fails_without_output_or_sensitive_error_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -50,16 +50,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         arguments = _parse_arguments(argv)
         checks = load_checks(Path(arguments.config))
+        output_path = Path(arguments.output)
         with ExitStack() as stack:
             request = RunRequest(_open_packages(arguments.packages, stack))
             result = CheckRunner(checks).run(request)
-        write_result_zip(Path(arguments.output), result)
+        write_result_zip(output_path, result)
     except (_UsageError, ConfigError, _InputError, OutputError) as error:
         _write_error(str(error))
         return 2
     except RunnerError as error:
         _write_error(f"{error.code.value}: {error.message}")
         return 2 if error.code is RunnerErrorCode.REQUEST_INVALID else 3
+    _write_completion(result.conclusion, output_path)
     return 1 if result.conclusion is RunConclusion.REVIEW_REQUIRED else 0
 
 
@@ -98,3 +100,8 @@ def _open_packages(paths: list[str], stack: ExitStack) -> tuple[InputPackage, ..
 
 def _write_error(message: str) -> None:
     sys.stderr.write(message + "\n")
+
+
+def _write_completion(conclusion: RunConclusion, output_path: Path) -> None:
+    review_prompt = "，请人工复核" if conclusion is RunConclusion.REVIEW_REQUIRED else ""
+    sys.stdout.write(f"检查完成：{conclusion.value}{review_prompt}。结果 ZIP：{output_path}\n")

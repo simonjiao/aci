@@ -24,4 +24,6 @@ uv run --locked python -m unittest discover -s tests
 uv run --locked skillqa check --config config/skillqa.toml --output result.zip skill.zip
 ```
 
+结果 ZIP 中的 `security-scan.csv` 用于人工复核，`security-metadata.json` 保存扫描元数据。
+
 退出码依次表示：`0` 通过、`1` 需要复核、`2` 参数、配置或输出错误、`3` 扫描失败。

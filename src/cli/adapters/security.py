@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Annotated, Literal, cast
 
@@ -29,6 +31,26 @@ from skill_security import (
 from ..output import encode_json
 
 _JSON_LOADS = cast(Callable[[str], object], json.loads)
+_CSV_HEADERS = (
+    "Finding ID",
+    "包名称",
+    "来源标识",
+    "包 SHA-256",
+    "规则 ID",
+    "检测项",
+    "规则描述",
+    "风险等级",
+    "包内路径",
+    "行号",
+    "列号",
+    "证据类型",
+    "脱敏证据",
+    "证据指纹",
+    "状态",
+    "修改建议",
+    "规则版本",
+    "规则 SHA-256",
+)
 
 
 class SecurityPolicyConfig(BaseModel):
@@ -93,19 +115,71 @@ class SecurityAdapter:
             if result.conclusion is Conclusion.REVIEW_REQUIRED
             else RunConclusion.PASS
         )
-        artifact = OutputArtifact(
-            "security-scan.json",
-            "application/json",
-            encode_json(_result_document(result)),
+        findings_artifact = OutputArtifact(
+            "security-scan.csv",
+            "text/csv; charset=utf-8",
+            _encode_findings_csv(result),
         )
-        return CheckResult(self.check_id, conclusion, (artifact,))
+        metadata_artifact = OutputArtifact(
+            "security-metadata.json",
+            "application/json",
+            encode_json(_metadata_document(result)),
+        )
+        return CheckResult(
+            self.check_id,
+            conclusion,
+            (findings_artifact, metadata_artifact),
+        )
 
 
 def _security_package(package: InputPackage) -> PackageInput:
     return PackageInput(package.display_name, package.stream, package.source_id)
 
 
-def _result_document(result: ScanResult) -> dict[str, object]:
+def _encode_findings_csv(result: ScanResult) -> bytes:
+    buffer = StringIO(newline="")
+    writer = csv.writer(buffer, lineterminator="\r\n", quoting=csv.QUOTE_ALL)
+    write_row = cast(Callable[[Iterable[object]], object], writer.writerow)
+    write_row(_CSV_HEADERS)
+    for finding in result.findings:
+        row: tuple[str | int, ...] = tuple(
+            _csv_cell(value)
+            for value in (
+                finding.id,
+                finding.package_name,
+                finding.source_id,
+                finding.package_sha256,
+                finding.rule_id,
+                finding.rule_name,
+                finding.source_description,
+                finding.severity,
+                finding.entry_path,
+                finding.line,
+                finding.column,
+                finding.evidence_type,
+                finding.evidence,
+                finding.evidence_fingerprint,
+                finding.status.value,
+                finding.remediation,
+                finding.rule_version,
+                finding.rule_sha256,
+            )
+        )
+        write_row(row)
+    return buffer.getvalue().encode("utf-8-sig")
+
+
+def _csv_cell(value: str | int | None) -> str | int:
+    if value is None:
+        return ""
+    if isinstance(value, int):
+        return value
+    if value.startswith(("=", "+", "-", "@", "\t", "\r", "\n")):
+        return "'" + value
+    return value
+
+
+def _metadata_document(result: ScanResult) -> dict[str, object]:
     packages: list[object] = [
         {
             "display_name": package.display_name,
@@ -116,33 +190,9 @@ def _result_document(result: ScanResult) -> dict[str, object]:
         }
         for package in result.packages
     ]
-    findings: list[object] = [
-        {
-            "id": finding.id,
-            "package_name": finding.package_name,
-            "source_id": finding.source_id,
-            "package_sha256": finding.package_sha256,
-            "rule_version": finding.rule_version,
-            "rule_sha256": finding.rule_sha256,
-            "rule_id": finding.rule_id,
-            "rule_name": finding.rule_name,
-            "source_description": finding.source_description,
-            "severity": finding.severity,
-            "entry_path": finding.entry_path,
-            "line": finding.line,
-            "column": finding.column,
-            "evidence_type": finding.evidence_type,
-            "evidence": finding.evidence,
-            "evidence_fingerprint": finding.evidence_fingerprint,
-            "status": finding.status.value,
-            "remediation": finding.remediation,
-        }
-        for finding in result.findings
-    ]
     return {
         "conclusion": result.conclusion.value,
         "packages": packages,
-        "findings": findings,
         "coverage": {
             "executed_rule_ids": list(result.coverage.executed_rule_ids),
             "unresolved_rule_ids": list(result.coverage.unresolved_rule_ids),

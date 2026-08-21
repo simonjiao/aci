@@ -6,14 +6,14 @@ import json
 import tempfile
 import unittest
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import chdir, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import cast
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from cli.main import main
-from tests.support import list_field
+from tests.support import list_field, object_dict, string_field
 
 ROOT = Path(__file__).resolve().parents[1]
 _JSON_LOADS = cast(Callable[[str], object], json.loads)
@@ -111,22 +111,22 @@ class CliTests(unittest.TestCase):
             self.assertEqual(metadata["conclusion"], "PASS")
             self.assertEqual(len(list_field(metadata, "packages")), 1)
             expected_headers: list[str] = [
-                "Finding ID",
                 "包名称",
-                "来源标识",
-                "包 SHA-256",
+                "风险等级",
                 "规则 ID",
                 "检测项",
                 "规则描述",
-                "风险等级",
                 "包内路径",
                 "行号",
                 "列号",
                 "证据类型",
                 "脱敏证据",
-                "证据指纹",
-                "状态",
                 "修改建议",
+                "状态",
+                "来源标识",
+                "Finding ID",
+                "包 SHA-256",
+                "证据指纹",
                 "规则版本",
                 "规则 SHA-256",
             ]
@@ -147,6 +147,73 @@ class CliTests(unittest.TestCase):
                 )
             self.assertEqual(second_exit, 0)
             self.assertEqual(output.read_bytes(), second_output.read_bytes())
+
+    def test_directory_input_scans_top_level_zip_files_in_name_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_directory = root / "skills"
+            nested_directory = package_directory / "nested"
+            config = root / "skillqa.toml"
+            output = root / "result.zip"
+            nested_directory.mkdir(parents=True)
+            write_skill(package_directory / "b.ZIP", "# Safe B\n")
+            write_skill(package_directory / "a.zip", "# Safe A\n")
+            write_skill(nested_directory / "ignored.zip", "# Nested\n")
+            (package_directory / "notes.md").write_text("not a package", encoding="utf-8")
+            write_config(config)
+
+            with chdir(root), redirect_stdout(StringIO()):
+                exit_code = main(
+                    (
+                        "check",
+                        "--config",
+                        config.name,
+                        "--output",
+                        output.name,
+                        package_directory.name,
+                    )
+                )
+
+            self.assertEqual(exit_code, 0)
+            with ZipFile(output) as archive:
+                metadata = json_object(archive.read("security-metadata.json"))
+            package_summaries = [
+                object_dict(summary) for summary in list_field(metadata, "packages")
+            ]
+            package_names = [
+                string_field(summary, "display_name") for summary in package_summaries
+            ]
+            expected_names: list[str] = ["a.zip", "b.ZIP"]
+            self.assertEqual(package_names, expected_names)
+
+    def test_empty_directory_is_not_ignored_when_mixed_with_a_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "safe.zip"
+            empty_directory = root / "empty"
+            config = root / "skillqa.toml"
+            output = root / "result.zip"
+            write_skill(package, "# Safe\n")
+            empty_directory.mkdir()
+            write_config(config)
+            stderr = StringIO()
+
+            with redirect_stderr(stderr), redirect_stdout(StringIO()):
+                exit_code = main(
+                    (
+                        "check",
+                        "--config",
+                        str(config),
+                        "--output",
+                        str(output),
+                        str(package),
+                        str(empty_directory),
+                    )
+                )
+
+            self.assertEqual(exit_code, 2)
+            self.assertFalse(output.exists())
+            self.assertIn("未找到可扫描的 ZIP 包", stderr.getvalue())
 
     def test_review_findings_are_written_and_return_exit_one(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

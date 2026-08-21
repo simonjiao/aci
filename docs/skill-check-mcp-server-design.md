@@ -5,8 +5,8 @@
 | 文档状态 | Final |
 | 生效日期 | 2026-08-21 |
 | 设计对象 | Skill 检查 MCP Server、文件通道与临时存储 |
-| 当前 Tool | `scan_skill_security` |
-| 实现基础 | 已有 `SecurityScan`、`CheckRunner` 和 `SecurityAdapter` |
+| Tool | `scan_skill_security` |
+| 复用 Module | `SecurityScan`、`CheckRunner` 和 `SecurityAdapter` |
 | 目标读者 | Skill 平台研发、安全研发、测试与运维人员 |
 
 ## 1. 设计结论
@@ -14,7 +14,7 @@
 MCP Server 使用官方 Python MCP SDK 2、Streamable HTTP 和协议版本
 `2026-07-28`。MCP 负责检查编排和进度通知；ZIP 输入与结果 ZIP 通过同一
 ASGI 应用中的受保护 HTTP 路由流式传输。
-服务端使用官方 `mcp.server.MCPServer`，不引入 FastMCP。
+服务端实现使用官方 `mcp.server.MCPServer`。
 
 | 项目 | 最终选择 |
 |---|---|
@@ -23,15 +23,15 @@ ASGI 应用中的受保护 HTTP 路由流式传输。
 | 批次执行 | 按输入顺序逐包处理；单包失败后继续后续包。 |
 | 进度 | MCP progress notification 报告批次校验、逐包开始、逐包完成或失败、结果生成。 |
 | Tool 输出 | 结构化摘要和结果 ZIP 的 `ResourceLink`；不返回自由文本或内嵌 ZIP 字节。 |
-| 当前存储 | 受控本地临时目录。 |
-| 可选存储 | S3 兼容对象存储，配置后使用真实 Adapter。 |
+| 默认存储 | 受控本地临时目录。 |
+| 备选存储 | S3 兼容对象存储，配置后使用真实 Adapter。 |
 | 认证 | MCP、上传、下载和删除统一使用静态 Bearer Key。 |
-| 执行方式 | 有上限的同步批次，不创建后台任务或数据库记录。 |
+| 执行方式 | 请求内完成有上限的同步批次；输入和结果 Artifact 的内容及元数据保留至 TTL 或显式删除。 |
 
-安全扫描规则、Finding 语义和证据处理仍由 `skill_security` Module 独占；
+安全扫描规则、Finding 语义和证据处理由 `skill_security` Module 独占；
 MCP Server 不修正规则、不生成额外安全判断，也不把处理失败表示为安全通过。
-本文的 Tool 输入、输出和进度契约仅适用于 `scan_skill_security`；注册其它 Tool
-时必须单独定义契约，不自动改变 `scan_skill_quality` 等设计。
+以下 Tool 输入、输出和进度契约属于 `scan_skill_security`；其它 Tool 分别定义
+自身契约。
 
 ## 2. 结构与职责
 
@@ -72,7 +72,7 @@ CheckRunner 或检查 Module。
 | ArtifactStore | 保存、物化、下载、租约、删除和 TTL 清理。 |
 | BatchScanCoordinator | 解析引用、顺序执行、隔离单包失败并产生中立进度事件。 |
 | CheckRunner | 按既定检查计划执行 Check Adapter。 |
-| SecurityAdapter | 调用安全扫描并返回现有 `security-scan.csv` 与 `security-metadata.json` Artifact。 |
+| SecurityAdapter | 调用安全扫描并返回 `security-scan.csv` 与 `security-metadata.json` Artifact。 |
 | SecurityBatchReportBuilder | 校验并合并逐包 CheckResult Artifact，写入批次报告工作区。 |
 | MCP Tool Handler | 校验 Tool Schema，将中立进度事件映射为 MCP 通知并返回结果链接。 |
 
@@ -133,7 +133,7 @@ Content-Length: 123456
 
 `GET /artifacts/{result_ref}` 校验引用类型、存在性和 TTL 后分块发送文件，支持
 标准 `Content-Length` 和安全的 `Content-Disposition`。URL 不携带认证信息，
-客户端继续使用同一个 Bearer Header。
+客户端使用同一个 Bearer Header。
 
 删除正在扫描或下载的对象返回 `409`。格式非法、丢失、过期或已删除的引用统一
 返回 `404`，不通过响应区分其历史状态，也不泄露存储路径。
@@ -228,13 +228,7 @@ ResourceLink：
 }
 ~~~
 
-`result_ref` 和过期时间属于运行元数据，不写入结果 ZIP。相同 ZIP 字节、顺序、
-显示名称、`source_id`、规则、策略和逐包处理结果产生相同的报告文件内容；
-Artifact 引用可以不同。
-
-该契约替换现有 `package_base64` 输入和 embedded ZIP 输出，属于不向后兼容的
-Tool Schema 变更。部署时按配置 `schema_version = "2"` 协调升级客户端；服务端
-不保留 Base64 双通道，避免重新引入完整文件常驻内存。
+`result_ref` 和过期时间属于运行元数据，不写入结果 ZIP。
 
 ## 5. 批次处理
 
@@ -249,6 +243,9 @@ Tool Schema 变更。部署时按配置 `schema_version = "2"` 协调升级客�
 4. 释放该包的 RunResult、输入流、scratch 文件和租约。
 5. 捕获经过清理的单包错误，写入失败状态并继续下一包。
 6. 从结果工作区生成 ZIP，流式保存为 `result_ref`。
+
+只有一个包时也执行同一批次流程；ZIP 大小只影响传输分块数和资源限制，不改变
+Tool 输入、进度、结果格式或下载方式。
 
 同一批次不并行扫描 ZIP，避免解码内容、文本事实和报告同时占用多份内存。
 报告 Builder 不在内存中累计全批次 Finding；不同批次的并发由服务级容量限制
@@ -323,11 +320,11 @@ security-metadata.json
 `package-status.csv` 和 `security-scan.csv` 使用 UTF-8 BOM、固定表头、CRLF 和
 CSV 公式注入防护。Builder 将两个 CSV 和 JSON 暂存为有大小上限的文件，再按
 固定顺序写入 ZIP。失败信息与安全违规分表，避免把执行错误解释为规则命中。
-结果不包含当前时间、主机路径、随机引用、静态 Key 或对象存储凭据。
+结果不包含主机路径、随机引用、静态 Key 或对象存储凭据。
 
 `package-status.csv` 固定列为“包序号、包名称、处理状态、检查结论、Finding
 数量、错误代码、错误说明、来源标识、包大小、包 SHA-256”。人工关注列在前，
-来源和哈希在后。`security-scan.csv` 保持现有 SecurityAdapter 的 18 列契约和
+来源和哈希在后。`security-scan.csv` 使用 SecurityAdapter 的 18 列契约和
 列序，不因批次接入改变 Finding 内容。Builder 只消费 CheckRunner 已返回的
 Artifact，不直接调用 SecurityScan，也不通过隐式状态取得 ScanResult。
 
@@ -362,7 +359,7 @@ S3 物化文件的全局上限；Builder 和 S3 Adapter 只能写入租约提供
 
 ### 7.2 Filesystem Adapter
 
-当前部署选择 Filesystem Adapter：
+Filesystem Adapter 用于本地临时存储部署：
 
 - 根目录和 scratch 目录必须是绝对路径、不可为符号链接且权限仅授予服务账户。
 - 存储名只使用服务端生成值；显示名称保存在受控元数据中。
@@ -379,14 +376,15 @@ S3 Adapter 支持 AWS S3、MinIO 和兼容实现：
 
 - 上传和结果写入使用分块或 multipart upload；失败时中止未完成上传。
 - 对象键由服务端生成，按配置前缀区分 package 和 result。
+- Artifact 元数据作为伴随对象持久化；服务重启后，未过期且未删除的引用仍可解析。
 - 扫描前把单个对象流式物化到本地 scratch；扫描后立即删除 scratch 文件。
-- 下载由服务端代理并继续执行统一 Bearer 认证，不把存储凭据放入 URL。
-- 应用维护 Artifact 元数据和进程内租约；对象生命周期策略作为过期清理兜底。
+- 下载由服务端代理并执行统一 Bearer 认证，不把存储凭据放入 URL。
+- 租约保存在进程内；对象生命周期策略作为过期清理兜底。
 
 配置接受 `type = "s3"` 时必须存在可工作的 S3 Adapter；缺少依赖、凭据或
 Bucket 访问能力时启动失败，不能延迟到 Tool 调用时报错。
-首版 S3 Adapter 与 Filesystem Adapter 均按单服务实例部署；多实例共享租约与
-容量协调不在本设计中宣称支持。
+S3 Adapter 与 Filesystem Adapter 均按单服务实例部署；Artifact 租约与容量
+不跨服务进程共享。
 
 ## 8. 认证与安全
 
@@ -404,13 +402,13 @@ Key 只通过环境变量注入，取值为 32—512 个无空白可打印 ASCII
 
 认证和 Host/Origin middleware 位于请求大小检查和路由之前，未授权请求不能占用
 文件写入、扫描或对象存储资源。顶层 HostOriginGuard 覆盖 MCP、上传、下载和
-删除路由；MCP transport 自身的 DNS rebinding 防护继续启用，形成一致的纵深
-校验。两层复用 `[http].allowed_hosts` 和 `[http].allowed_origins`，不增加独立
-配置：Host 必须匹配，Origin 缺省时允许、存在时必须匹配；默认不读取
-`X-Forwarded-*`。
+删除路由；MCP transport 的 DNS rebinding 防护同时启用。配置只生成一份 SDK
+`TransportSecuritySettings`；HostOriginGuard 委托 SDK 的 Host/Origin 匹配器，
+MCP transport 接收同一设置。Host 必须匹配，Origin 缺省时允许、存在时必须
+匹配；默认不读取 `X-Forwarded-*`。
 
 单个全局 Key 提供服务级认证，不区分共享该 Key 的调用方。Artifact 引用仍必须
-不可猜测；当前设计不把它描述为用户级授权。
+具有不可猜测性；该认证模型不提供用户级授权。
 
 ### 8.2 存储凭据
 
@@ -505,7 +503,7 @@ ResourceLink，必须是无用户信息、查询串和片段的 HTTP(S) 绝对�
 
 ### 9.2 S3 兼容对象存储
 
-公共配置不变，只替换后端：
+S3 兼容部署使用以下 backend 配置：
 
 ~~~toml
 [storage.backend]
@@ -553,18 +551,18 @@ src/
       security_scan.py     # Tool Schema、进度映射和结果链接
 ~~~
 
-`artifact_store` 不依赖 MCP、CLI 或安全检查；`skill_check_runner` 保持现有
-Interface，不依赖 HTTP、MCP 或存储。`mcp_server.services` 只依赖
+`artifact_store` 不依赖 MCP、CLI 或安全检查；`skill_check_runner` Interface
+不包含 HTTP、MCP 或存储概念。`mcp_server.services` 只依赖
 ArtifactStore Interface、CheckRunner 和报告 Builder，不接收 MCP `Context`；
 Coordinator 从 WorkspaceLease 取得普通写入流再交给 Builder，因此
 `skill_checks` 也不依赖 `artifact_store`。具体后端仅由 `mcp_server.config`
-选择。CLI 不依赖 `mcp_server`，其现有文件输入 Interface 不因本设计改变。
+选择。CLI 使用独立文件输入 Interface，不依赖 `mcp_server`。
 
 核心运行依赖使用官方 `mcp` SDK、Pydantic 2、Starlette 和 Uvicorn；S3 可选
 依赖使用 `boto3`。配置选择 S3 但未安装该依赖时启动失败。S3 Adapter 的阻塞
 I/O 也通过有上限的 worker thread 调用。
-外部 SDK 的宽类型只允许在对应 Adapter 内通过窄 Protocol 收口，源码和测试继续
-满足 mypy strict、Pydantic 插件和 Any 表达式 100%。
+外部 SDK 的宽类型只允许在对应 Adapter 内通过窄 Protocol 收口，源码和测试
+必须满足 mypy strict、Pydantic 插件和 Any 表达式 100%。
 
 ## 11. 错误表达
 
@@ -602,11 +600,11 @@ Artifact 成功生成，Tool 调用本身成功；包级失败通过结构化摘
 - `security-scan.csv` 只包含真实 Finding；所有失败均进入 `package-status.csv`。
 - 结果通过受保护 ResourceLink 下载，ToolResult 不包含 ZIP Base64 或自由文本。
 - TTL 不删除有效租约；上传取消、进程重启和结果生成失败不遗留 `.part`。
-- Filesystem 与 S3 Adapter 通过同一 ArtifactStore 合同测试。
-- 两个现有真实 Skill ZIP 通过 HTTP 上传、MCP 批次扫描和结果下载端到端回归。
-- 相同 ZIP 字节、顺序、显示名称、`source_id`、规则、策略和逐包处理结果生成
-  相同结果 ZIP 内容。
-- Host/Origin 防护、静态认证、并发、容量和所有资源上限有正反边界测试。
+- Filesystem 与 S3 Adapter 通过同一 ArtifactStore 合同测试，包括 Adapter 重建后的
+  引用解析和 TTL 行为。
+- 两个固定真实 Skill ZIP 通过 HTTP 上传、MCP 批次扫描和结果下载端到端回归。
+- `/mcp` 与文件路由使用相同 Host/Origin 正反用例；静态认证、并发、容量和所有
+  资源上限有正反边界测试。
 - 安装包、锁文件、Ruff、完整测试、mypy strict、Pydantic 插件和 Any 100% 通过。
 
 ## 13. 实现依据

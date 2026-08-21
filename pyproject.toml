@@ -12,6 +12,9 @@ dependencies = [
     "pydantic>=2,<3",
 ]
 
+[project.scripts]
+skillqa = "cli.main:main"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
@@ -20,6 +23,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 skill_security = ["py.typed"]
+skill_check_runner = ["py.typed"]
+cli = ["py.typed"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

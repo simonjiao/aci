@@ -1,0 +1,13 @@
+schema_version = "1"
+checks = ["security"]
+
+[modules.security]
+type = "skill-security"
+rules_file = "security-rules.json"
+
+[modules.security.policy]
+max_package_bytes = 536870912
+max_entries_per_package = 1000
+max_text_bytes_per_file = 65536
+max_total_read_bytes = 67108864
+max_findings = 10000

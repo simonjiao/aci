@@ -1,0 +1,20 @@
+schema_version = "1"
+
+[http]
+host = "127.0.0.1"
+port = 8000
+path = "/mcp"
+max_request_body_bytes = 716000000
+allowed_hosts = ["127.0.0.1:*", "localhost:*"]
+allowed_origins = ["http://127.0.0.1:*", "http://localhost:*"]
+
+[tools.scan_skill_security]
+type = "skill-security"
+rules_file = "security-rules.json"
+
+[tools.scan_skill_security.policy]
+max_package_bytes = 536870912
+max_entries_per_package = 1000
+max_text_bytes_per_file = 65536
+max_total_read_bytes = 67108864
+max_findings = 10000

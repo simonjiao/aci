@@ -9,11 +9,13 @@ description = "Deterministic static security scanning for Skill ZIP packages"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "mcp>=2,<3",
     "pydantic>=2,<3",
 ]
 
 [project.scripts]
 skillqa = "cli.main:main"
+skillqa-mcp = "mcp_server.main:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -25,6 +27,7 @@ where = ["src"]
 skill_security = ["py.typed"]
 skill_check_runner = ["py.typed"]
 skill_checks = ["py.typed"]
+mcp_server = ["py.typed"]
 cli = ["py.typed"]
 
 [tool.pytest.ini_options]

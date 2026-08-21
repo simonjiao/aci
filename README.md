@@ -28,3 +28,12 @@ uv run --locked skillqa check --config config/skillqa.toml --output result.zip s
 结果 ZIP 中的 `security-scan.csv` 用于人工复核，`security-metadata.json` 保存扫描元数据。
 
 退出码依次表示：`0` 通过、`1` 需要复核、`2` 参数、配置或输出错误、`3` 扫描失败。
+
+## MCP
+
+```bash
+uv run --locked skillqa-mcp --config config/mcp.toml
+```
+
+服务在 `http://127.0.0.1:8000/mcp` 提供 Streamable HTTP。Tool
+`scan_skill_security` 接收一个 ZIP 的文件名和 Base64 内容，只返回内嵌的结果 ZIP；不保存输入或结果。

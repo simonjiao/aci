@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import base64
+import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
 from typing import cast
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from mcp.types import BlobResourceContents, EmbeddedResource
+from mcp.types import ResourceLink
 
+from artifact_storage import FsspecArtifactStorage
 from mcp_server import create_server
 from skill_checks import SecurityAdapter
 from skill_security import ScanPolicy, SecurityScan, compile_rules
@@ -38,18 +40,31 @@ def _security_adapter() -> SecurityAdapter:
 
 
 class McpServerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_security_tool_returns_only_the_result_zip_resource(self) -> None:
-        server = create_server(_security_adapter(), max_package_bytes=1024 * 1024)
-        arguments: dict[str, object] = {
-            "package_name": "demo.zip",
-            "package_base64": base64.b64encode(_skill_zip("# Safe Skill\n")).decode("ascii"),
-            "source_id": "test-source",
-        }
+    async def test_security_tool_returns_only_the_result_zip_resource_link(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            server = create_server(
+                _security_adapter(),
+                FsspecArtifactStorage.filesystem(root / "artifacts"),
+                max_package_bytes=1024 * 1024,
+                scratch_directory=scratch,
+                max_result_bytes=1024 * 1024,
+                public_base_url="https://skillqa.test",
+            )
+            arguments: dict[str, object] = {
+                "package_name": "demo.zip",
+                "package_base64": base64.b64encode(_skill_zip("# Safe Skill\n")).decode(
+                    "ascii"
+                ),
+                "source_id": "test-source",
+            }
 
-        async with mcp_client(server, raise_exceptions=True) as client:
-            listed = tool_list(await client.list_tools())
-            result = tool_result(await client.call_tool("scan_skill_security", arguments))
-            negotiated_version = protocol_version(client.protocol_version)
+            async with mcp_client(server, raise_exceptions=True) as client:
+                listed = tool_list(await client.list_tools())
+                result = tool_result(await client.call_tool("scan_skill_security", arguments))
+                negotiated_version = protocol_version(client.protocol_version)
 
         self.assertEqual(negotiated_version, "2026-07-28")
         tool_names: list[str] = [tool.name for tool in listed.tools]
@@ -62,50 +77,53 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
             expected_required,
         )
         self.assertFalse(result.is_error)
-        self.assertIsNone(result.structured_content)
         self.assertEqual(len(result.content), 1)
-        resource_block = result.content[0]
-        if not isinstance(resource_block, EmbeddedResource):
-            raise AssertionError("expected embedded resource")
-        resource = resource_block.resource
-        if not isinstance(resource, BlobResourceContents):
-            raise AssertionError("expected binary resource")
-        self.assertEqual(resource.uri, "skill-security://result/skill-security-result.zip")
+        resource = result.content[0]
+        if not isinstance(resource, ResourceLink):
+            raise AssertionError("expected resource link")
+        self.assertTrue(resource.uri.startswith("https://skillqa.test/artifacts/res_"))
         self.assertEqual(resource.mime_type, "application/zip")
-        archive_bytes = base64.b64decode(resource.blob, validate=True)
-        with ZipFile(BytesIO(archive_bytes)) as archive:
-            expected_names: list[str] = [
-                "manifest.json",
-                "security-scan.csv",
-                "security-metadata.json",
-            ]
-            self.assertEqual(archive.namelist(), expected_names)
-            self.assertEqual(archive.testzip(), None)
+        self.assertIsInstance(resource.size, int)
+        structured = object_dict(result.structured_content)
+        self.assertEqual(structured["result_size_bytes"], resource.size)
+        self.assertTrue(str(structured["result_ref"]).startswith("res_"))
+        self.assertEqual(len(str(structured["result_sha256"])), 64)
 
     async def test_invalid_tool_input_does_not_echo_sensitive_values(self) -> None:
-        server = create_server(_security_adapter(), max_package_bytes=1024 * 1024)
-        canary = "TOKEN_CANARY_SECRET" * 20
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scratch = root / "scratch"
+            scratch.mkdir()
+            server = create_server(
+                _security_adapter(),
+                FsspecArtifactStorage.filesystem(root / "artifacts"),
+                max_package_bytes=1024 * 1024,
+                scratch_directory=scratch,
+                max_result_bytes=1024 * 1024,
+                public_base_url="https://skillqa.test",
+            )
+            canary = "TOKEN_CANARY_SECRET" * 20
 
-        async with mcp_client(server, raise_exceptions=False) as client:
-            cases: tuple[dict[str, object], ...] = (
-                {
-                    "package_name": canary + ".zip",
-                    "package_base64": {"value": canary},
-                },
-                {"package_name": "demo.zip", "package_base64": canary},
-                {"package_base64": canary},
-                {"package_name": canary + ".zip"},
-                {"unexpected": canary},
-            )
-            for arguments in cases:
-                result = tool_result(await client.call_tool("scan_skill_security", arguments))
-                self.assertTrue(result.is_error)
-                error_content = cast(object, result.content)
-                self.assertNotIn("CANARY_SECRET", str(error_content))
-            empty_arguments: dict[str, object] = {}
-            unknown = tool_result(
-                await client.call_tool("TOKEN_CANARY_SECRET", empty_arguments)
-            )
+            async with mcp_client(server, raise_exceptions=False) as client:
+                cases: tuple[dict[str, object], ...] = (
+                    {
+                        "package_name": canary + ".zip",
+                        "package_base64": {"value": canary},
+                    },
+                    {"package_name": "demo.zip", "package_base64": canary},
+                    {"package_base64": canary},
+                    {"package_name": canary + ".zip"},
+                    {"unexpected": canary},
+                )
+                for arguments in cases:
+                    result = tool_result(await client.call_tool("scan_skill_security", arguments))
+                    self.assertTrue(result.is_error)
+                    error_content = cast(object, result.content)
+                    self.assertNotIn("CANARY_SECRET", str(error_content))
+                empty_arguments: dict[str, object] = {}
+                unknown = tool_result(
+                    await client.call_tool("TOKEN_CANARY_SECRET", empty_arguments)
+                )
 
         self.assertTrue(unknown.is_error)
         unknown_content = cast(object, unknown.content)

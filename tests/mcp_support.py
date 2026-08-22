@@ -4,6 +4,7 @@ from types import TracebackType
 from typing import Protocol, cast
 
 from mcp import Client
+from mcp.client.session_group import StreamableHttpParameters
 from mcp.server import MCPServer
 
 
@@ -50,7 +51,12 @@ class _ClientFactory(Protocol):
     ) -> object: ...
 
 
+class _StreamableParametersFactory(Protocol):
+    def __call__(self, *, url: str, headers: dict[str, object]) -> object: ...
+
+
 _CLIENT = cast(_ClientFactory, Client)
+_STREAMABLE_PARAMETERS = cast(_StreamableParametersFactory, StreamableHttpParameters)
 
 
 def mcp_client(
@@ -73,3 +79,16 @@ def protocol_version(value: object) -> str:
     if not isinstance(value, str):
         raise AssertionError("expected negotiated protocol version")
     return value
+
+
+def authenticated_streamable_http_parameters(
+    url: str,
+    key: str,
+) -> StreamableHttpParameters:
+    return cast(
+        StreamableHttpParameters,
+        _STREAMABLE_PARAMETERS(
+            url=url,
+            headers={"Authorization": f"Bearer {key}"},
+        ),
+    )

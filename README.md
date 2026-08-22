@@ -32,8 +32,11 @@ uv run --locked skillqa check --config config/skillqa.toml --output result.zip s
 ## MCP
 
 ```bash
+export SKILLQA_API_KEY='<至少 32 位的静态密钥>'
 uv run --locked skillqa-mcp --config config/mcp.toml
 ```
 
 服务在 `http://127.0.0.1:8000/mcp` 提供 Streamable HTTP。Tool
-`scan_skill_security` 接收一个 ZIP 的文件名和 Base64 内容，只返回内嵌的结果 ZIP；不保存输入或结果。
+`scan_skill_security` 接收一个 ZIP 的文件名和 Base64 内容，返回结果摘要和受保护的
+`ResourceLink`。客户端使用同一个 Bearer Key 从该链接流式下载结果 ZIP；结果存储可
+配置为本地文件系统或安装 `s3` extra 后使用 S3 兼容对象存储。

@@ -3,13 +3,17 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from importlib import import_module
 from pathlib import Path
-from typing import Literal, Never, Protocol, cast
+from typing import Never, Protocol, cast
 
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ConfigDict, ValidationError
+from starlette.types import ASGIApp
 
+from .auth import StaticBearerAuth
 from .config import ConfigError, HttpSettings, ServerConfig, load_config
+from .http_security import HostOriginGuard
 from .server import create_server
 
 _NAMESPACE_VALUES = cast(Callable[[object], dict[str, object]], vars)
@@ -30,19 +34,18 @@ class _Arguments(BaseModel):
     config: str
 
 
-class _HttpServer(Protocol):
+class _UvicornModule(Protocol):
     def run(
         self,
-        transport: Literal["streamable-http"],
+        app: ASGIApp,
         *,
         host: str,
         port: int,
-        streamable_http_path: str,
-        json_response: bool,
-        stateless_http: bool,
-        max_request_body_size: int,
-        transport_security: TransportSecuritySettings,
+        log_level: str,
     ) -> None: ...
+
+
+_UVICORN = cast(_UvicornModule, import_module("uvicorn"))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -84,19 +87,31 @@ def _parse_arguments(argv: Sequence[str] | None) -> _Arguments:
 def _serve(config: ServerConfig) -> None:
     server = create_server(
         config.security_adapter,
+        config.artifact_storage,
         max_package_bytes=config.max_package_bytes,
+        scratch_directory=config.scratch_directory,
+        max_result_bytes=config.max_result_bytes,
+        public_base_url=config.http.public_base_url,
     )
     settings = config.http
-    runnable = cast(_HttpServer, server)
-    runnable.run(
-        "streamable-http",
-        host=settings.host,
-        port=settings.port,
+    transport_security = _transport_security(settings)
+    app = server.streamable_http_app(
         streamable_http_path=settings.path,
         json_response=True,
         stateless_http=True,
         max_request_body_size=settings.max_request_body_bytes,
-        transport_security=_transport_security(settings),
+        transport_security=transport_security,
+        host=settings.host,
+    )
+    secured_app = HostOriginGuard(
+        StaticBearerAuth(app, config.bearer_key),
+        transport_security,
+    )
+    _UVICORN.run(
+        secured_app,
+        host=settings.host,
+        port=settings.port,
+        log_level="info",
     )
 
 

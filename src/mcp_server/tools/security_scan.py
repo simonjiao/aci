@@ -8,18 +8,17 @@ from typing import Annotated, Protocol, cast
 
 from mcp.server import MCPServer
 from mcp.types import (
-    BlobResourceContents,
     CallToolResult,
-    EmbeddedResource,
+    ResourceLink,
     ToolAnnotations,
 )
 from pydantic import Field
 
 from skill_check_runner import CheckRunner, InputPackage, RunnerError, RunRequest, RunResult
-from skill_check_runner.result_archive import write_result_archive
 from skill_checks import SecurityAdapter
 
-_RESULT_URI = "skill-security://result/skill-security-result.zip"
+from ..result_artifacts import ResultArtifactError, ResultArtifactPublisher
+
 _PackageNameInput = Annotated[str, Field(min_length=5, max_length=255)]
 _PackageContentInput = Annotated[str, Field(min_length=1)]
 _SourceIdInput = Annotated[str | None, Field(min_length=1, max_length=256)]
@@ -55,32 +54,35 @@ class _ToolRegistrar(Protocol):
     ) -> None: ...
 
 
-class _BlobResourceFactory(Protocol):
+class _ResourceLinkFactory(Protocol):
     def __call__(
         self,
         *,
+        name: str,
         uri: str,
+        description: str,
         mime_type: str,
-        blob: str,
+        size: int,
     ) -> object: ...
 
 
-class _EmbeddedResourceFactory(Protocol):
-    def __call__(self, *, resource: object) -> object: ...
-
-
 class _ToolResultFactory(Protocol):
-    def __call__(self, *, content: list[object]) -> object: ...
+    def __call__(
+        self,
+        *,
+        content: list[object],
+        structured_content: dict[str, object],
+    ) -> object: ...
 
 
-_BLOB_RESOURCE = cast(_BlobResourceFactory, BlobResourceContents)
-_EMBEDDED_RESOURCE = cast(_EmbeddedResourceFactory, EmbeddedResource)
+_RESOURCE_LINK = cast(_ResourceLinkFactory, ResourceLink)
 _TOOL_RESULT = cast(_ToolResultFactory, CallToolResult)
 
 
 def register_security_scan(
     server: MCPServer[None],
     security_adapter: SecurityAdapter,
+    result_publisher: ResultArtifactPublisher,
     *,
     max_package_bytes: int,
 ) -> None:
@@ -103,25 +105,25 @@ def register_security_scan(
             package_bytes,
             validated_source,
         )
-        archive = BytesIO()
-        succeeded = False
         try:
-            write_result_archive(run_result, archive)
-            succeeded = True
-        except Exception:
-            pass
-        if not succeeded:
-            raise _ToolExecutionError("CHECK_RESULT_WRITE_FAILED: 结果文件生成失败")
+            published = result_publisher.publish(run_result)
+        except ResultArtifactError:
+            raise _ToolExecutionError("CHECK_RESULT_WRITE_FAILED: 结果文件生成失败") from None
         return _TOOL_RESULT(
             content=[
-                _EMBEDDED_RESOURCE(
-                    resource=_BLOB_RESOURCE(
-                        uri=_RESULT_URI,
-                        mime_type="application/zip",
-                        blob=base64.b64encode(archive.getvalue()).decode("ascii"),
-                    )
+                _RESOURCE_LINK(
+                    name="skill-security-result.zip",
+                    uri=published.uri,
+                    description="使用与 MCP 相同的 Bearer Key 下载",
+                    mime_type="application/zip",
+                    size=published.size_bytes,
                 )
-            ]
+            ],
+            structured_content={
+                "result_ref": published.reference,
+                "result_size_bytes": published.size_bytes,
+                "result_sha256": published.sha256,
+            },
         )
 
     registrar = cast(_ToolRegistrar, server)
@@ -129,11 +131,11 @@ def register_security_scan(
         scan_skill_security,
         name="scan_skill_security",
         title="检查 Skill 安全规则",
-        description="检查一个 Skill ZIP，返回包含人工报告和元数据的结果 ZIP。",
+        description="检查一个 Skill ZIP，返回结果摘要和受保护的结果 ZIP 下载链接。",
         annotations=ToolAnnotations(
-            read_only_hint=True,
+            read_only_hint=False,
             destructive_hint=False,
-            idempotent_hint=True,
+            idempotent_hint=False,
             open_world_hint=False,
         ),
         structured_output=False,

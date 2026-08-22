@@ -9,9 +9,15 @@ description = "Deterministic static security scanning for Skill ZIP packages"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "fsspec>=2025.3,<2027",
     "mcp>=2,<3",
     "pydantic>=2,<3",
+    "starlette>=1,<2",
+    "uvicorn>=0.35,<1",
 ]
+
+[project.optional-dependencies]
+s3 = ["s3fs>=2025.3,<2027"]
 
 [project.scripts]
 skillqa = "cli.main:main"
@@ -28,6 +34,7 @@ skill_security = ["py.typed"]
 skill_check_runner = ["py.typed"]
 skill_checks = ["py.typed"]
 mcp_server = ["py.typed"]
+artifact_storage = ["py.typed"]
 cli = ["py.typed"]
 
 [tool.pytest.ini_options]

@@ -8,10 +8,21 @@ from pathlib import Path
 from typing import cast
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from mcp.types import ResourceLink
+from mcp.server import MCPServer
+from mcp.types import ResourceLink, TextContent
 
-from artifact_storage import FsspecArtifactStorage
+from artifact_storage import (
+    ArtifactByteStream,
+    ArtifactInfo,
+    ArtifactStorage,
+    ArtifactStorageFailure,
+    ArtifactUnavailable,
+    FsspecArtifactStorage,
+    PreparedArtifact,
+    StoredArtifact,
+)
 from mcp_server import create_server
+from mcp_server.result_artifacts import ResultArtifactPublisher
 from skill_checks import SecurityAdapter
 from skill_security import ScanPolicy, SecurityScan, compile_rules
 from tests.mcp_support import mcp_client, protocol_version, tool_list, tool_result
@@ -39,20 +50,53 @@ def _security_adapter() -> SecurityAdapter:
     return SecurityAdapter(rules, SecurityScan(policy))
 
 
+def _server(
+    root: Path,
+    *,
+    storage: ArtifactStorage | None = None,
+    max_result_bytes: int = 1024 * 1024,
+) -> MCPServer[None]:
+    scratch = root / "scratch"
+    scratch.mkdir()
+    resolved_storage = storage or FsspecArtifactStorage.filesystem(root / "artifacts")
+    publisher = ResultArtifactPublisher(
+        resolved_storage,
+        scratch_directory=scratch,
+        max_result_bytes=max_result_bytes,
+        public_base_url="https://skillqa.test",
+    )
+    return create_server(
+        _security_adapter(),
+        publisher,
+        max_package_bytes=1024 * 1024,
+    )
+
+
+class _FailingArtifactStorage:
+    def publish_result(self, prepared: PreparedArtifact) -> StoredArtifact:
+        raise ArtifactStorageFailure("TOKEN_CANARY_STORAGE_DETAIL")
+
+    def inspect_result(self, reference: str) -> ArtifactInfo:
+        raise ArtifactUnavailable("Artifact 不可用")
+
+    def stream_result(self, reference: str, *, chunk_size: int) -> ArtifactByteStream:
+        raise ArtifactUnavailable("Artifact 不可用")
+
+    def close(self) -> None:
+        pass
+
+
+def _error_text(content: list[object]) -> str:
+    if len(content) != 1 or not isinstance(content[0], TextContent):
+        raise AssertionError("expected one text error")
+    return content[0].text
+
+
 class McpServerTests(unittest.IsolatedAsyncioTestCase):
     async def test_security_tool_returns_only_the_result_zip_resource_link(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            scratch = root / "scratch"
-            scratch.mkdir()
-            server = create_server(
-                _security_adapter(),
-                FsspecArtifactStorage.filesystem(root / "artifacts"),
-                max_package_bytes=1024 * 1024,
-                scratch_directory=scratch,
-                max_result_bytes=1024 * 1024,
-                public_base_url="https://skillqa.test",
-            )
+            server = _server(root)
             arguments: dict[str, object] = {
                 "package_name": "demo.zip",
                 "package_base64": base64.b64encode(_skill_zip("# Safe Skill\n")).decode(
@@ -89,19 +133,46 @@ class McpServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(str(structured["result_ref"]).startswith("res_"))
         self.assertEqual(len(str(structured["result_sha256"])), 64)
 
+    async def test_result_storage_failure_returns_its_stable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            server = _server(Path(directory), storage=_FailingArtifactStorage())
+            arguments: dict[str, object] = {
+                "package_name": "demo.zip",
+                "package_base64": base64.b64encode(_skill_zip("# Safe Skill\n")).decode(
+                    "ascii"
+                ),
+            }
+
+            async with mcp_client(server, raise_exceptions=False) as client:
+                result = tool_result(await client.call_tool("scan_skill_security", arguments))
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(_error_text(result.content), "STORAGE_UNAVAILABLE: 结果存储不可用")
+        self.assertNotIn("CANARY", _error_text(result.content))
+
+    async def test_result_size_failure_returns_its_stable_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            server = _server(Path(directory), max_result_bytes=1)
+            arguments: dict[str, object] = {
+                "package_name": "demo.zip",
+                "package_base64": base64.b64encode(_skill_zip("# Safe Skill\n")).decode(
+                    "ascii"
+                ),
+            }
+
+            async with mcp_client(server, raise_exceptions=False) as client:
+                result = tool_result(await client.call_tool("scan_skill_security", arguments))
+
+        self.assertTrue(result.is_error)
+        self.assertEqual(
+            _error_text(result.content),
+            "CHECK_RESULT_WRITE_FAILED: 结果文件生成失败",
+        )
+
     async def test_invalid_tool_input_does_not_echo_sensitive_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            scratch = root / "scratch"
-            scratch.mkdir()
-            server = create_server(
-                _security_adapter(),
-                FsspecArtifactStorage.filesystem(root / "artifacts"),
-                max_package_bytes=1024 * 1024,
-                scratch_directory=scratch,
-                max_result_bytes=1024 * 1024,
-                public_base_url="https://skillqa.test",
-            )
+            server = _server(root)
             canary = "TOKEN_CANARY_SECRET" * 20
 
             async with mcp_client(server, raise_exceptions=False) as client:

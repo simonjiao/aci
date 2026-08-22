@@ -4,6 +4,7 @@ import hashlib
 import tempfile
 import unittest
 from pathlib import Path
+from types import TracebackType
 
 from artifact_storage import (
     ArtifactStorageFailure,
@@ -11,6 +12,7 @@ from artifact_storage import (
     FsspecArtifactStorage,
     PreparedArtifact,
 )
+from artifact_storage.fsspec_storage import _IdempotentClientContext
 
 
 def _prepared(path: Path, content: bytes) -> PreparedArtifact:
@@ -19,6 +21,29 @@ def _prepared(path: Path, content: bytes) -> PreparedArtifact:
 
 
 class ArtifactStorageTests(unittest.TestCase):
+    def test_rejects_a_path_that_resolves_to_the_filesystem_root(self) -> None:
+        root_alias = Path(Path.cwd().anchor) / "skillqa-path-must-not-exist" / ".."
+
+        with self.assertRaises(ValueError):
+            FsspecArtifactStorage.filesystem(root_alias)
+
+    def test_s3_close_releases_the_backend_and_is_repeatable(self) -> None:
+        filesystem = _ClosableS3Filesystem()
+        storage = FsspecArtifactStorage(
+            filesystem,
+            "contract-bucket/prefix",
+            protocol="s3",
+        )
+
+        storage.close()
+        storage.close()
+
+        expected: list[tuple[object, object]] = [
+            (filesystem.loop, filesystem.creator),
+            (filesystem.loop, filesystem.creator),
+        ]
+        self.assertEqual(filesystem.calls, expected)
+
     def test_publishes_and_streams_an_immutable_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -43,9 +68,15 @@ class ArtifactStorageTests(unittest.TestCase):
                 storage.inspect_result("../result.zip")
             with self.assertRaises(ArtifactUnavailable) as missing:
                 storage.inspect_result("res_00000000000000000000000000000000")
+            with self.assertRaises(ArtifactUnavailable) as missing_stream:
+                storage.stream_result(
+                    "res_00000000000000000000000000000000",
+                    chunk_size=1024,
+                )
 
         self.assertEqual(str(invalid.exception), "Artifact 不可用")
         self.assertEqual(str(missing.exception), "Artifact 不可用")
+        self.assertEqual(str(missing_stream.exception), "Artifact 不可用")
 
     def test_rejects_prepared_content_that_does_not_match_its_descriptor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -58,6 +89,49 @@ class ArtifactStorageTests(unittest.TestCase):
                 storage.publish_result(invalid)
 
         self.assertEqual(str(raised.exception), "Artifact 发布输入无效")
+
+
+class _ClosableS3Filesystem:
+    def __init__(self) -> None:
+        self.loop = object()
+        self.creator = object()
+        self.calls: list[tuple[object, object]] = []
+
+    @property
+    def _s3creator(self) -> object:
+        return self.creator
+
+    def close_session(self, loop: object, creator: object) -> None:
+        self.calls.append((loop, creator))
+
+
+class _TrackedAsyncClientContext:
+    def __init__(self) -> None:
+        self.exits = 0
+
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> object:
+        self.exits += 1
+        return None
+
+
+class S3SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_context_closes_its_delegate_only_once(self) -> None:
+        delegate = _TrackedAsyncClientContext()
+        context = _IdempotentClientContext(delegate)
+
+        await context.__aenter__()
+        await context.__aexit__(None, None, None)
+        await context.__aexit__(None, None, None)
+
+        self.assertEqual(delegate.exits, 1)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from starlette.types import ASGIApp
 from .auth import StaticBearerAuth
 from .config import ConfigError, HttpSettings, ServerConfig, load_config
 from .http_security import HostOriginGuard
+from .result_artifacts import ResultArtifactPublisher
 from .server import create_server
 
 _NAMESPACE_VALUES = cast(Callable[[object], dict[str, object]], vars)
@@ -85,34 +86,40 @@ def _parse_arguments(argv: Sequence[str] | None) -> _Arguments:
 
 
 def _serve(config: ServerConfig) -> None:
-    server = create_server(
-        config.security_adapter,
-        config.artifact_storage,
-        max_package_bytes=config.max_package_bytes,
-        scratch_directory=config.scratch_directory,
-        max_result_bytes=config.max_result_bytes,
-        public_base_url=config.http.public_base_url,
-    )
-    settings = config.http
-    transport_security = _transport_security(settings)
-    app = server.streamable_http_app(
-        streamable_http_path=settings.path,
-        json_response=True,
-        stateless_http=True,
-        max_request_body_size=settings.max_request_body_bytes,
-        transport_security=transport_security,
-        host=settings.host,
-    )
-    secured_app = HostOriginGuard(
-        StaticBearerAuth(app, config.bearer_key),
-        transport_security,
-    )
-    _UVICORN.run(
-        secured_app,
-        host=settings.host,
-        port=settings.port,
-        log_level="info",
-    )
+    try:
+        result_publisher = ResultArtifactPublisher(
+            config.artifact_storage,
+            scratch_directory=config.scratch_directory,
+            max_result_bytes=config.max_result_bytes,
+            public_base_url=config.http.public_base_url,
+        )
+        server = create_server(
+            config.security_adapter,
+            result_publisher,
+            max_package_bytes=config.max_package_bytes,
+        )
+        settings = config.http
+        transport_security = _transport_security(settings)
+        app = server.streamable_http_app(
+            streamable_http_path=settings.path,
+            json_response=True,
+            stateless_http=True,
+            max_request_body_size=settings.max_request_body_bytes,
+            transport_security=transport_security,
+            host=settings.host,
+        )
+        secured_app = HostOriginGuard(
+            StaticBearerAuth(app, config.bearer_key),
+            transport_security,
+        )
+        _UVICORN.run(
+            secured_app,
+            host=settings.host,
+            port=settings.port,
+            log_level="info",
+        )
+    finally:
+        config.artifact_storage.close()
 
 
 def _transport_security(settings: HttpSettings) -> TransportSecuritySettings:

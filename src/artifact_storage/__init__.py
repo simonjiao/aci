@@ -1,5 +1,5 @@
 from .fsspec_storage import FsspecArtifactStorage
-from .interface import ArtifactStorage
+from .interface import ArtifactByteStream, ArtifactStorage
 from .models import (
     ArtifactInfo,
     ArtifactStorageFailure,
@@ -11,6 +11,7 @@ from .models import (
 
 __all__ = [
     "ArtifactInfo",
+    "ArtifactByteStream",
     "ArtifactStorage",
     "ArtifactStorageFailure",
     "ArtifactUnavailable",

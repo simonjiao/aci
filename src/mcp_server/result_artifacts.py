@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import BinaryIO, cast
 
-from artifact_storage import ArtifactStorage, PreparedArtifact
+from artifact_storage import ArtifactStorage, ArtifactStorageFailure, PreparedArtifact
 from skill_check_runner import RunResult
 from skill_check_runner.result_archive import write_result_archive
 
-_HASH_CHUNK_BYTES = 1024 * 1024
+from .artifact_urls import result_artifact_uri
 
 
 class ResultArtifactError(Exception):
@@ -40,8 +40,11 @@ class ResultArtifactPublisher:
         self._max_result_bytes = max_result_bytes
         self._public_base_url = public_base_url.rstrip("/")
 
+    @property
+    def storage(self) -> ArtifactStorage:
+        return self._storage
+
     def publish(self, result: RunResult) -> PublishedResult:
-        published: PublishedResult | None = None
         try:
             with TemporaryDirectory(
                 dir=self._scratch_directory,
@@ -49,32 +52,49 @@ class ResultArtifactPublisher:
             ) as directory:
                 path = Path(directory) / "skill-security-result.zip"
                 with path.open("w+b") as output:
-                    write_result_archive(result, output)
-                size_bytes = path.stat().st_size
-                if size_bytes <= 0 or size_bytes > self._max_result_bytes:
+                    bounded = _BoundedBinaryWriter(output, self._max_result_bytes)
+                    try:
+                        write_result_archive(result, cast(BinaryIO, bounded))
+                    except _ResultSizeLimitExceeded:
+                        raise ResultArtifactError("结果文件大小无效") from None
+                prepared = PreparedArtifact.from_file(path)
+                if prepared.size_bytes <= 0 or prepared.size_bytes > self._max_result_bytes:
                     raise ResultArtifactError("结果文件大小无效")
-                sha256 = _sha256(path)
-                stored = self._storage.publish_result(
-                    PreparedArtifact(path, size_bytes, sha256)
-                )
-                published = PublishedResult(
+                stored = self._storage.publish_result(prepared)
+                return PublishedResult(
                     stored.reference,
-                    f"{self._public_base_url}/artifacts/{stored.reference}",
+                    result_artifact_uri(self._public_base_url, stored.reference),
                     stored.size_bytes,
                     stored.sha256,
                 )
+        except ArtifactStorageFailure:
+            raise
         except ResultArtifactError:
-            pass
+            raise
         except Exception:
-            pass
-        if published is None:
-            raise ResultArtifactError("结果文件发布失败")
-        return published
+            raise ResultArtifactError("结果文件生成失败") from None
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(_HASH_CHUNK_BYTES):
-            digest.update(chunk)
-    return digest.hexdigest()
+class _ResultSizeLimitExceeded(Exception):
+    pass
+
+
+class _BoundedBinaryWriter:
+    def __init__(self, target: BinaryIO, limit: int) -> None:
+        self._target = target
+        self._limit = limit
+
+    def write(self, content: bytes) -> int:
+        position = self._target.tell()
+        if position < 0 or len(content) > self._limit - position:
+            raise _ResultSizeLimitExceeded
+        return self._target.write(content)
+
+    def tell(self) -> int:
+        return self._target.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._target.seek(offset, whence)
+
+    def flush(self) -> None:
+        self._target.flush()

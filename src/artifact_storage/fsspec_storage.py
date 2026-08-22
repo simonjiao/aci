@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import secrets
-from collections.abc import Iterator
 from contextlib import suppress
 from importlib import import_module
 from pathlib import Path
+from types import TracebackType
 from typing import BinaryIO, Protocol, cast
 
+from .interface import ArtifactByteStream
 from .models import (
     ArtifactInfo,
     ArtifactStorageFailure,
@@ -18,10 +18,36 @@ from .models import (
 )
 
 _COPY_CHUNK_BYTES = 1024 * 1024
+_S3_BLOCK_BYTES = 8 * 1024 * 1024
 
 
 class _FsspecModule(Protocol):
     def filesystem(self, protocol: str, **storage_options: object) -> object: ...
+
+
+class _AsyncClientContext(Protocol):
+    async def __aenter__(self) -> object: ...
+
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> object: ...
+
+
+class _BotocoreSession(Protocol):
+    def unregister(self, event_name: str, handler: object) -> object: ...
+
+    def create_client(self, service_name: str, **kwargs: object) -> object: ...
+
+
+class _SessionModule(Protocol):
+    def get_session(self) -> object: ...
+
+
+class _HandlersModule(Protocol):
+    add_expect_header: object
 
 
 class _FileSystem(Protocol):
@@ -36,29 +62,41 @@ class _FileSystem(Protocol):
     def size(self, path: str) -> object: ...
 
 
+class _S3FileSystem(Protocol):
+    @property
+    def loop(self) -> object: ...
+
+    @property
+    def _s3creator(self) -> object: ...
+
+    def close_session(self, loop: object, s3: object) -> None: ...
+
+
 _FSSPEC = cast(_FsspecModule, import_module("fsspec"))
 
 
 class FsspecArtifactStorage:
-    def __init__(self, filesystem: object, root: str) -> None:
+    def __init__(self, filesystem: object, root: str, *, protocol: str = "file") -> None:
         if not root or root.endswith("/"):
             raise ValueError("Artifact 存储参数无效")
         self._filesystem = cast(_FileSystem, filesystem)
         self._root = root
+        self._protocol = protocol
 
     @classmethod
     def filesystem(cls, root: Path) -> FsspecArtifactStorage:
-        if (
-            not root.is_absolute()
-            or root == Path(root.anchor)
-            or root.exists()
-            and root.is_symlink()
-        ):
+        if not root.is_absolute() or root.exists() and root.is_symlink():
             raise ValueError("Artifact 存储参数无效")
-        root.mkdir(parents=True, exist_ok=True)
-        resolved = root.resolve(strict=True)
-        filesystem = _create_filesystem("file", {"auto_mkdir": True})
-        storage = cls(filesystem, resolved.as_posix())
+        resolved = root.resolve()
+        if resolved == Path(resolved.anchor):
+            raise ValueError("Artifact 存储参数无效")
+        resolved.mkdir(parents=True, exist_ok=True)
+        resolved = resolved.resolve(strict=True)
+        filesystem = _create_filesystem(
+            "file",
+            {"auto_mkdir": True, "skip_instance_cache": True},
+        )
+        storage = cls(filesystem, resolved.as_posix(), protocol="file")
         storage._ensure_result_root()
         return storage
 
@@ -79,11 +117,15 @@ class FsspecArtifactStorage:
             session_token is not None and access_key is None
         ):
             raise ValueError("Artifact 存储参数无效")
-        client_kwargs: dict[str, object] = {
+        client_kwargs: dict[str, object] = {"region_name": region}
+        storage_options: dict[str, object] = {
+            "default_block_size": _S3_BLOCK_BYTES,
             "endpoint_url": endpoint_url,
-            "region_name": region,
+            "client_kwargs": client_kwargs,
+            "max_concurrency": 1,
+            "session": _new_s3_session(),
+            "skip_instance_cache": True,
         }
-        storage_options: dict[str, object] = {"client_kwargs": client_kwargs}
         if path_style:
             storage_options["config_kwargs"] = {"s3": {"addressing_style": "path"}}
         if access_key is not None:
@@ -93,8 +135,12 @@ class FsspecArtifactStorage:
                 storage_options["token"] = session_token
         filesystem = _create_filesystem("s3", storage_options)
         root = bucket if not prefix else f"{bucket}/{prefix.rstrip('/')}"
-        storage = cls(filesystem, root)
-        storage._require_existing_bucket(bucket)
+        storage = cls(filesystem, root, protocol="s3")
+        try:
+            storage._verify_s3_access(bucket)
+        except Exception:
+            storage.close()
+            raise
         return storage
 
     def publish_result(self, prepared: PreparedArtifact) -> StoredArtifact:
@@ -135,21 +181,22 @@ class FsspecArtifactStorage:
         except Exception:
             raise ArtifactStorageFailure("Artifact 检查失败") from None
 
-    def stream_result(self, reference: str, *, chunk_size: int) -> Iterator[bytes]:
+    def stream_result(self, reference: str, *, chunk_size: int) -> ArtifactByteStream:
         if type(chunk_size) is not int or chunk_size <= 0:
             raise ValueError("Artifact 分块参数无效")
         target = self._result_path(reference)
+        try:
+            source = cast(BinaryIO, self._filesystem.open(target, "rb"))
+        except Exception:
+            self._raise_open_failure(target)
+        return _FileByteStream(source, chunk_size)
 
-        def chunks() -> Iterator[bytes]:
-            try:
-                source = cast(BinaryIO, self._filesystem.open(target, "rb"))
-                with source:
-                    while chunk := source.read(chunk_size):
-                        yield chunk
-            except Exception:
-                raise ArtifactStorageFailure("Artifact 读取失败") from None
-
-        return chunks()
+    def close(self) -> None:
+        if self._protocol != "s3":
+            return
+        filesystem = cast(_S3FileSystem, self._filesystem)
+        with suppress(Exception):
+            filesystem.close_session(filesystem.loop, filesystem._s3creator)
 
     def _ensure_result_root(self) -> None:
         try:
@@ -157,15 +204,31 @@ class FsspecArtifactStorage:
         except Exception:
             raise ArtifactStorageFailure("Artifact 存储不可用") from None
 
-    def _require_existing_bucket(self, bucket: str) -> None:
+    def _verify_s3_access(self, bucket: str) -> None:
+        probe = f"{self._root}/results/.skillqa-probe-{secrets.token_hex(16)}"
+        marker = b"skillqa-storage-probe"
+        cleanup_required = False
         try:
             exists = self._filesystem.exists(bucket)
             if type(exists) is not bool or not exists:
                 raise ArtifactStorageFailure("Artifact 存储不可用")
+            cleanup_required = True
+            destination = cast(BinaryIO, self._filesystem.open(probe, "wb"))
+            with destination:
+                destination.write(marker)
+            source = cast(BinaryIO, self._filesystem.open(probe, "rb"))
+            with source:
+                if source.read(len(marker) + 1) != marker:
+                    raise ArtifactStorageFailure("Artifact 存储不可用")
+            self._filesystem.rm(probe)
+            cleanup_required = False
         except ArtifactStorageFailure:
             raise
         except Exception:
             raise ArtifactStorageFailure("Artifact 存储不可用") from None
+        finally:
+            if cleanup_required:
+                self._remove_incomplete(probe)
 
     def _new_result_target(self) -> tuple[str, str]:
         try:
@@ -187,18 +250,19 @@ class FsspecArtifactStorage:
         return f"{self._root}/results/{reference[4:]}.zip"
 
     def _validate_prepared(self, prepared: PreparedArtifact) -> None:
-        valid = False
-        with suppress(OSError):
-            valid = (
-                prepared.path.is_file()
-                and type(prepared.size_bytes) is int
-                and prepared.size_bytes > 0
-                and prepared.path.stat().st_size == prepared.size_bytes
-                and len(prepared.sha256) == 64
-                and prepared.sha256 == _sha256(prepared.path)
-            )
-        if not valid:
+        if not prepared.matches_file():
             raise ArtifactStorageFailure("Artifact 发布输入无效")
+
+    def _raise_open_failure(self, target: str) -> None:
+        try:
+            exists = self._filesystem.exists(target)
+            if type(exists) is bool and not exists:
+                raise ArtifactUnavailable("Artifact 不可用")
+        except ArtifactUnavailable:
+            raise
+        except Exception:
+            pass
+        raise ArtifactStorageFailure("Artifact 读取失败")
 
     def _remove_incomplete(self, target: str) -> None:
         try:
@@ -209,16 +273,81 @@ class FsspecArtifactStorage:
             pass
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(_COPY_CHUNK_BYTES):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _create_filesystem(protocol: str, options: dict[str, object]) -> object:
     try:
         return _FSSPEC.filesystem(protocol, **options)
     except Exception:
         raise ArtifactStorageFailure("Artifact 存储不可用") from None
+
+
+def _new_s3_session() -> object:
+    try:
+        session_module = cast(_SessionModule, import_module("aiobotocore.session"))
+        handlers_module = cast(_HandlersModule, import_module("botocore.handlers"))
+        session = cast(_BotocoreSession, session_module.get_session())
+        session.unregister("before-call.s3", handlers_module.add_expect_header)
+        return _IdempotentS3Session(session)
+    except Exception:
+        raise ArtifactStorageFailure("Artifact 存储不可用") from None
+
+
+class _IdempotentS3Session:
+    def __init__(self, session: _BotocoreSession) -> None:
+        self._session = session
+
+    def create_client(self, service_name: str, **kwargs: object) -> object:
+        context = cast(
+            _AsyncClientContext,
+            self._session.create_client(service_name, **kwargs),
+        )
+        return _IdempotentClientContext(context)
+
+
+class _IdempotentClientContext:
+    def __init__(self, context: _AsyncClientContext) -> None:
+        self._context = context
+        self._closed = False
+
+    async def __aenter__(self) -> object:
+        return await self._context.__aenter__()
+
+    async def __aexit__(
+        self,
+        exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> object:
+        if self._closed:
+            return None
+        self._closed = True
+        return await self._context.__aexit__(exception_type, exception, traceback)
+
+
+class _FileByteStream:
+    def __init__(self, source: BinaryIO, chunk_size: int) -> None:
+        self._source = source
+        self._chunk_size = chunk_size
+        self._closed = False
+
+    def __iter__(self) -> _FileByteStream:
+        return self
+
+    def __next__(self) -> bytes:
+        if self._closed:
+            raise StopIteration
+        try:
+            chunk = self._source.read(self._chunk_size)
+        except Exception:
+            self.close()
+            raise ArtifactStorageFailure("Artifact 读取失败") from None
+        if not chunk:
+            self.close()
+            raise StopIteration
+        return chunk
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        with suppress(Exception):
+            self._source.close()

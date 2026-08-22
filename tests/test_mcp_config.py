@@ -78,13 +78,80 @@ max_findings = 100
 
 
 class McpConfigTests(unittest.TestCase):
-    def test_repository_mcp_config_is_loadable(self) -> None:
-        with _environment("SKILLQA_API_KEY", "test-static-key-0123456789abcdef"):
-            loaded = load_config(ROOT / "config/mcp.toml")
+    def test_rejects_a_scratch_path_that_resolves_to_the_filesystem_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "mcp.toml"
+            (root / "security-rules.json").write_bytes(
+                (ROOT / "config/security-rules.json").read_bytes()
+            )
+            _write_config(config)
+            root_alias = Path(Path.cwd().anchor) / "skillqa-path-must-not-exist" / ".."
+            config.write_text(
+                config.read_text(encoding="utf-8").replace(
+                    f'scratch_directory = "{(root / "scratch").as_posix()}"',
+                    f'scratch_directory = "{root_alias.as_posix()}"',
+                ),
+                encoding="utf-8",
+            )
 
-        self.assertEqual(loaded.http.path, "/mcp")
-        self.assertEqual(loaded.http.public_base_url, "http://127.0.0.1:8000")
-        self.assertEqual(loaded.security_adapter.check_id, "security")
+            with (
+                _environment("SKILLQA_TEST_API_KEY", "test-static-key-0123456789abcdef"),
+                self.assertRaises(ConfigError),
+            ):
+                load_config(config)
+
+    def test_invalid_public_url_is_rejected_before_storage_is_created(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "mcp.toml"
+            (root / "security-rules.json").write_bytes(
+                (ROOT / "config/security-rules.json").read_bytes()
+            )
+            _write_config(config)
+            config.write_text(
+                config.read_text(encoding="utf-8").replace(
+                    'public_base_url = "http://127.0.0.1:8765"',
+                    'public_base_url = "http://127.0.0.1:8765/not-root"',
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                _environment("SKILLQA_TEST_API_KEY", "test-static-key-0123456789abcdef"),
+                self.assertRaises(ConfigError),
+            ):
+                load_config(config)
+
+            self.assertFalse((root / "artifacts").exists())
+
+    def test_repository_mcp_config_is_loadable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "mcp.toml"
+            (root / "security-rules.json").write_bytes(
+                (ROOT / "config/security-rules.json").read_bytes()
+            )
+            config.write_text(
+                (ROOT / "config/mcp.toml")
+                .read_text(encoding="utf-8")
+                .replace(
+                    'scratch_directory = "/tmp/skillqa-mcp/scratch"',
+                    f'scratch_directory = "{(root / "scratch").as_posix()}"',
+                )
+                .replace(
+                    'root = "/tmp/skillqa-mcp/artifacts"',
+                    f'root = "{(root / "artifacts").as_posix()}"',
+                ),
+                encoding="utf-8",
+            )
+            with _environment("SKILLQA_API_KEY", "test-static-key-0123456789abcdef"):
+                loaded = load_config(config)
+
+            self.assertEqual(loaded.http.path, "/mcp")
+            self.assertEqual(loaded.http.public_base_url, "http://127.0.0.1:8000")
+            self.assertEqual(loaded.security_adapter.check_id, "security")
+            loaded.artifact_storage.close()
 
     def test_loads_http_and_security_tool_config_from_its_own_toml(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

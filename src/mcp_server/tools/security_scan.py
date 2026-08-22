@@ -14,9 +14,11 @@ from mcp.types import (
 )
 from pydantic import Field
 
+from artifact_storage import ArtifactStorageFailure
 from skill_check_runner import CheckRunner, InputPackage, RunnerError, RunRequest, RunResult
 from skill_checks import SecurityAdapter
 
+from ..error_boundary import safe_tool_error
 from ..result_artifacts import ResultArtifactError, ResultArtifactPublisher
 
 _PackageNameInput = Annotated[str, Field(min_length=5, max_length=255)]
@@ -107,8 +109,10 @@ def register_security_scan(
         )
         try:
             published = result_publisher.publish(run_result)
+        except ArtifactStorageFailure:
+            return safe_tool_error("STORAGE_UNAVAILABLE: 结果存储不可用")
         except ResultArtifactError:
-            raise _ToolExecutionError("CHECK_RESULT_WRITE_FAILED: 结果文件生成失败") from None
+            return safe_tool_error("CHECK_RESULT_WRITE_FAILED: 结果文件生成失败")
         return _TOOL_RESULT(
             content=[
                 _RESOURCE_LINK(
